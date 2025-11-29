@@ -7,7 +7,7 @@ from openai import OpenAI
 # ==========================================
 # 1. НАСТРОЙКИ СТРАНИЦЫ
 # ==========================================
-st.set_page_config(page_title="WB AI Master v11", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="WB AI Master v12 (Docs Fix)", layout="wide", page_icon="🛍️")
 
 st.markdown("""
     <style>
@@ -61,21 +61,23 @@ def send_wb(review_id, text, wb_token, mode="feedbacks"):
     
     try:
         if mode == "feedbacks":
-            # ОТЗЫВЫ
+            # --- ОТПРАВКА ОТЗЫВА ---
+            # Адрес: .../feedbacks/answer
             url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer"
             payload = {"id": review_id, "text": text}
         else:
-            # ВОПРОСЫ
-            # УБРАЛИ STATE, ОН ТУТ НЕ НУЖЕН
-            url = "https://feedbacks-api.wildberries.ru/api/v1/questions/answer"
+            # --- ОТПРАВКА ВОПРОСА (По документации) ---
+            # Адрес: .../questions (БЕЗ /answer !!!)
+            url = "https://feedbacks-api.wildberries.ru/api/v1/questions"
             payload = {
                 "id": review_id,
-                "answer": {"text": text}
+                "answer": {"text": text},
+                "state": "wbViewed" # Обязательный статус по документации
             }
         
         res = requests.patch(url, headers=headers, json=payload, timeout=15)
         
-        # 200 и 204 - успех
+        # 200 и 204 - это успех
         if res.status_code in [200, 204]: 
             return "OK"
         else: 
@@ -153,7 +155,7 @@ if not wb_token or not groq_key:
     st.warning("Введите ключи.")
     st.stop()
 
-st.title("🛍️ WB AI Master v11")
+st.title("🛍️ WB AI Master v12")
 
 tab1, tab2, tab3 = st.tabs(["⭐ Отзывы", "❓ Вопросы", "🗄️ Архив"])
 
