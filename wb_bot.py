@@ -7,7 +7,7 @@ from openai import OpenAI
 # ==========================================
 # 1. НАСТРОЙКИ СТРАНИЦЫ
 # ==========================================
-st.set_page_config(page_title="WB AI Master v12 (Docs Fix)", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="WB AI Master v13", layout="wide", page_icon="🛍️")
 
 st.markdown("""
     <style>
@@ -61,23 +61,23 @@ def send_wb(review_id, text, wb_token, mode="feedbacks"):
     
     try:
         if mode == "feedbacks":
-            # --- ОТПРАВКА ОТЗЫВА ---
-            # Адрес: .../feedbacks/answer
+            # ОТЗЫВЫ
             url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer"
             payload = {"id": review_id, "text": text}
         else:
-            # --- ОТПРАВКА ВОПРОСА (По документации) ---
-            # Адрес: .../questions (БЕЗ /answer !!!)
+            # ВОПРОСЫ:
+            # 1. Правильный URL (без /answer)
+            # 2. УБРАЛИ поле 'state', так как оно вызывает ошибку 400
             url = "https://feedbacks-api.wildberries.ru/api/v1/questions"
             payload = {
                 "id": review_id,
-                "answer": {"text": text},
-                "state": "wbViewed" # Обязательный статус по документации
+                "answer": {"text": text}
             }
         
+        # Используем PATCH, как в документации
         res = requests.patch(url, headers=headers, json=payload, timeout=15)
         
-        # 200 и 204 - это успех
+        # 200 и 204 - успех
         if res.status_code in [200, 204]: 
             return "OK"
         else: 
@@ -155,7 +155,7 @@ if not wb_token or not groq_key:
     st.warning("Введите ключи.")
     st.stop()
 
-st.title("🛍️ WB AI Master v12")
+st.title("🛍️ WB AI Master v13")
 
 tab1, tab2, tab3 = st.tabs(["⭐ Отзывы", "❓ Вопросы", "🗄️ Архив"])
 
