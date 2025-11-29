@@ -2,10 +2,10 @@ import streamlit as st
 import requests
 import time
 import datetime
-import json
+from openai import OpenAI
 
 # --- 1. НАСТРОЙКИ ---
-st.set_page_config(page_title="WB AI Manager", layout="wide")
+st.set_page_config(page_title="WB DeepSeek Bot", layout="wide")
 
 # --- 2. ПАМЯТЬ ---
 if 'history' not in st.session_state: st.session_state['history'] = []
@@ -37,13 +37,16 @@ def send_wb_reply(review_id, text, wb_token):
     except:
         return False
 
-# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ (GEMINI PRO 1.0) ---
-def generate_gemini_direct(api_key, text, rating, product, signature):
+# --- ФУНКЦИИ DEEPSEEK ---
+def generate_deepseek(api_key, text, rating, product, signature):
     if not api_key: return "Ошибка: Нет ключа"
 
-    # !!! ВАЖНОЕ ИЗМЕНЕНИЕ: ИСПОЛЬЗУЕМ СТАРУЮ, НО СТАБИЛЬНУЮ ССЫЛКУ !!!
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
-    
+    # Подключаемся к DeepSeek через библиотеку OpenAI
+    client = OpenAI(
+        api_key=api_key, 
+        base_url="https://api.deepseek.com"  # Важный адрес!
+    )
+
     if rating >= 4:
         tone = "позитивный, благодарный"
         goal = "поблагодарить клиента"
@@ -51,42 +54,28 @@ def generate_gemini_direct(api_key, text, rating, product, signature):
         tone = "вежливый, извиняющийся"
         goal = "отработать негатив"
 
-    prompt_text = f"""
-    Роль: Ты сотрудник поддержки на Wildberries.
+    prompt = f"""
+    Роль: Сотрудник поддержки Wildberries.
     Товар: {product}
     Отзыв: "{text}" ({rating} звезд).
-    Напиши ответ ({tone}, {goal}).
-    В конце подпись: "{signature}".
-    Длина: 2-3 предложения.
+    Задача: Напиши ответ ({tone}, {goal}).
+    Обязательно добавь подпись: "{signature}".
+    Ответ должен быть кратким (2-3 предложения), без лишней воды.
     """
     
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt_text}]
-        }],
-        "safetySettings": [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-        ]
-    }
-
     try:
-        response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=15)
-        
-        if response.status_code == 200:
-            data = response.json()
-            try:
-                return data['candidates'][0]['content']['parts'][0]['text']
-            except:
-                return "Ошибка: Google прислал пустой ответ"
-        else:
-            # Выводим точный текст ошибки от Google для отладки
-            return f"Google Error: {response.status_code} {response.text}"
-            
+        response = client.chat.completions.create(
+            model="deepseek-chat", # Используем их основную модель
+            messages=[
+                {"role": "system", "content": "Ты помощник селлера."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+            timeout=15
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        return f"Ошибка соединения: {e}"
+        return f"Ошибка DeepSeek: {e}"
 
 def add_history(prod, rev, ans, rate):
     st.session_state['history'].insert(0, {
@@ -96,32 +85,33 @@ def add_history(prod, rev, ans, rate):
 
 # --- 4. ИНТЕРФЕЙС ---
 
-st.title("🤖 WB AI Manager (Pro Stable)")
+st.title("🐳 WB DeepSeek Manager")
 
 with st.sidebar:
     st.header("Настройки")
     
+    # Ключи
     my_wb = ""
-    my_gem = ""
+    my_ds = ""
     if hasattr(st, 'secrets'):
         my_wb = st.secrets.get('WB_API_TOKEN', "")
-        my_gem = st.secrets.get('GEMINI_API_KEY', "")
+        # Ищем любой ключ, похожий на дипсик или опенаи
+        my_ds = st.secrets.get('DEEPSEEK_API_KEY', st.secrets.get('OPENAI_API_KEY', ""))
             
     wb_token = st.text_input("WB Token", value=my_wb, type="password")
-    gemini_key = st.text_input("Gemini Key", value=my_gem, type="password")
+    deepseek_key = st.text_input("DeepSeek Key (sk-...)", value=my_ds, type="password")
     brand_sign = st.text_input("Подпись", value="С уважением, представитель бренда")
     
     st.divider()
     auto_mode = st.toggle("⚡ АВТО-РЕЖИМ", value=False)
 
-if not wb_token or not gemini_key:
+if not wb_token or not deepseek_key:
     st.warning("Введите ключи слева.")
     st.stop()
 
 # --- 5. ЛОГИКА ---
 
 if auto_mode:
-    st.info("Авто-режим активен (Gemini Pro)")
     status = st.empty()
     reviews = get_wb_reviews(wb_token)
     
@@ -135,12 +125,12 @@ if auto_mode:
         text = review.get('text', '')
         rating = review['productValuation']
         
-        status.warning(f"Обрабатываю: {prod}")
+        status.warning(f"DeepSeek пишет: {prod}...")
         
         # Генерация
-        ans = generate_gemini_direct(gemini_key, text, rating, prod, brand_sign)
+        ans = generate_deepseek(deepseek_key, text, rating, prod, brand_sign)
         
-        if ans and "Error" not in ans and "Ошибка" not in ans:
+        if ans and "Ошибка" not in ans:
             if send_wb_reply(review['id'], ans, wb_token):
                 add_history(prod, text, ans, rating)
                 st.toast(f"Отправлено: {prod}")
@@ -159,7 +149,7 @@ else:
     # Ручной режим
     tab1, tab2 = st.tabs(["Новые", "История"])
     with tab1:
-        if st.button("Обновить"):
+        if st.button("Обновить список"):
             st.session_state['reviews'] = get_wb_reviews(wb_token)
         
         reviews = st.session_state['reviews']
@@ -174,8 +164,8 @@ else:
                 
                 with st.expander(f"{'⭐'*rating} {prod}", expanded=True):
                     st.write(txt)
-                    if st.button("✨ Генерировать", key=f"g_{rid}"):
-                        ans = generate_gemini_direct(gemini_key, txt, rating, prod, brand_sign)
+                    if st.button("✨ DeepSeek Генерировать", key=f"g_{rid}"):
+                        ans = generate_deepseek(deepseek_key, txt, rating, prod, brand_sign)
                         st.session_state['generated_answers'][rid] = ans
                     
                     val = st.session_state['generated_answers'].get(rid, "")
