@@ -200,4 +200,88 @@ with tab1:
                     if send_wb(rev['id'], final_txt, wb_token, "feedbacks") == "OK":
                         st.success("Готово!")
                         time.sleep(1)
-                        st.session_state['feedbacks'] = [r for r in st.session_state['feedbacks'] if r['id'] != rev['id
+                        st.session_state['feedbacks'] = [r for r in st.session_state['feedbacks'] if r['id'] != rev['id']]
+                        st.rerun()
+                    else:
+                        st.error("Ошибка отправки")
+
+# === ВОПРОСЫ ===
+with tab2:
+    if st.button("🔄 Обновить вопросы", type="primary"):
+        with st.spinner("Загрузка..."):
+            st.session_state['questions'] = get_wb_data(wb_token, "questions")
+            
+    quests = st.session_state.get('questions', [])
+    if not quests:
+        st.info("Нет вопросов.")
+    else:
+        for q in quests:
+            with st.container(border=True):
+                st.markdown(f"❓ **{q['productDetails']['productName']}**")
+                st.write(f"**Вопрос:** {q.get('text', '')}")
+                
+                q_key = f"q_ans_{q['id']}"
+                
+                if st.button("✨ Придумать ответ", key=f"btn_q_{q['id']}"):
+                    with st.spinner("Думаю..."):
+                        ans = generate_ai(groq_key, q.get('text', ''), q['productDetails']['productName'], "Покупатель", custom_prompt, signature)
+                        st.session_state[q_key] = ans
+                        if "ОШИБКА" in ans: st.error(ans)
+                        else: st.rerun()
+
+                val_q = st.session_state.get(q_key, "")
+                final_q = st.text_area("Ответ:", value=val_q, key=f"area_q_{q['id']}")
+                
+                if st.button("🚀 Отправить", key=f"snd_q_{q['id']}"):
+                    if send_wb(q['id'], final_q, wb_token, "questions") == "OK":
+                        st.success("Отправлено!")
+                        time.sleep(1)
+                        st.session_state['questions'] = [x for x in st.session_state['questions'] if x['id'] != q['id']]
+                        st.rerun()
+                    else:
+                        st.error("Ошибка отправки")
+
+# === АРХИВ ===
+with tab3:
+    if st.button("📥 История"):
+        with st.spinner("Загрузка..."):
+            st.session_state['history'] = get_wb_data(wb_token, "feedbacks", True)
+    
+    history = st.session_state.get('history', [])
+    if history:
+        for item in history:
+            with st.container(border=True):
+                st.write(f"**Товар:** {item['productDetails']['productName']}")
+                st.write(f"👤 {item.get('text', '')}")
+                if item.get('answer'):
+                    st.info(f"✅ {item['answer']['text']}")
+                else:
+                    st.warning("Нет текста ответа")
+
+# === АВТО-РЕЖИМ ===
+if auto_mode:
+    st.info("Авто-режим работает...")
+    progress = st.progress(0)
+    
+    # Отзывы
+    items = get_wb_data(wb_token, "feedbacks", False)
+    for i, item in enumerate(items):
+        ans = generate_ai(groq_key, item.get('text',''), item['productDetails']['productName'], "Клиент", custom_prompt, signature)
+        if ans and "ОШИБКА" not in ans:
+            if send_wb(item['id'], ans, wb_token, "feedbacks") == "OK":
+                st.toast(f"Отзыв закрыт: {item['id']}")
+        progress.progress((i+1)/len(items))
+        time.sleep(2)
+        
+    # Вопросы
+    quests = get_wb_data(wb_token, "questions", False)
+    for i, q in enumerate(quests):
+        ans = generate_ai(groq_key, q.get('text',''), q['productDetails']['productName'], "Покупатель", custom_prompt, signature)
+        if ans and "ОШИБКА" not in ans:
+            if send_wb(q['id'], ans, wb_token, "questions") == "OK":
+                st.toast(f"Вопрос закрыт")
+        time.sleep(2)
+        
+    st.success("Цикл завершен. Пауза 60 сек.")
+    time.sleep(60)
+    st.rerun()
