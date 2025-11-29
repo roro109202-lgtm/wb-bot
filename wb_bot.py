@@ -75,7 +75,7 @@ def send_wb(review_id, text, wb_token, mode="feedbacks"):
         return f"Сбой сети: {e}"
 
 # ==========================================
-# 3. ФУНКЦИЯ НЕЙРОСЕТИ (GROQ)
+# 3. ФУНКЦИЯ НЕЙРОСЕТИ (GROQ - NEW MODEL)
 # ==========================================
 
 def generate_ai(api_key, text, item_name, user_name, instructions, signature):
@@ -100,8 +100,8 @@ def generate_ai(api_key, text, item_name, user_name, instructions, signature):
     
     try:
         response = client.chat.completions.create(
-            # СТАВИМ САМУЮ МОЩНУЮ И СТАБИЛЬНУЮ МОДЕЛЬ
-            model="llama3-70b-8192", 
+            # ОБНОВЛЕННАЯ МОДЕЛЬ (Llama 3.3)
+            model="llama-3.3-70b-versatile", 
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5,
             max_tokens=800
@@ -139,7 +139,8 @@ with st.sidebar:
             try:
                 client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
                 resp = client.chat.completions.create(
-                    model="llama3-70b-8192",
+                    # ОБНОВЛЕННАЯ МОДЕЛЬ В ТЕСТЕ
+                    model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": "Скажи: Привет"}],
                 )
                 st.success(f"Работает! Ответ: {resp.choices[0].message.content}")
@@ -162,7 +163,7 @@ if not wb_token or not groq_key:
     st.warning("👈 Введите ключи!")
     st.stop()
 
-st.title("🛍️ WB AI Master (Stable)")
+st.title("🛍️ WB AI Master (Updated)")
 
 tab1, tab2, tab3 = st.tabs(["⭐ Отзывы", "❓ Вопросы", "🗄️ Архив"])
 
@@ -197,13 +198,14 @@ with tab1:
                 
                 # Отправка
                 if st.button("🚀 Отправить", key=f"snd_{rev['id']}"):
-                    if send_wb(rev['id'], final_txt, wb_token, "feedbacks") == "OK":
-                        st.success("Готово!")
+                    res = send_wb(rev['id'], final_txt, wb_token, "feedbacks")
+                    if res == "OK":
+                        st.success("Готово! (Модерация WB)")
                         time.sleep(1)
                         st.session_state['feedbacks'] = [r for r in st.session_state['feedbacks'] if r['id'] != rev['id']]
                         st.rerun()
                     else:
-                        st.error("Ошибка отправки")
+                        st.error(res)
 
 # === ВОПРОСЫ ===
 with tab2:
@@ -233,13 +235,14 @@ with tab2:
                 final_q = st.text_area("Ответ:", value=val_q, key=f"area_q_{q['id']}")
                 
                 if st.button("🚀 Отправить", key=f"snd_q_{q['id']}"):
-                    if send_wb(q['id'], final_q, wb_token, "questions") == "OK":
+                    res = send_wb(q['id'], final_q, wb_token, "questions")
+                    if res == "OK":
                         st.success("Отправлено!")
                         time.sleep(1)
                         st.session_state['questions'] = [x for x in st.session_state['questions'] if x['id'] != q['id']]
                         st.rerun()
                     else:
-                        st.error("Ошибка отправки")
+                        st.error(res)
 
 # === АРХИВ ===
 with tab3:
@@ -268,7 +271,8 @@ if auto_mode:
     for i, item in enumerate(items):
         ans = generate_ai(groq_key, item.get('text',''), item['productDetails']['productName'], "Клиент", custom_prompt, signature)
         if ans and "ОШИБКА" not in ans:
-            if send_wb(item['id'], ans, wb_token, "feedbacks") == "OK":
+            res = send_wb(item['id'], ans, wb_token, "feedbacks")
+            if res == "OK":
                 st.toast(f"Отзыв закрыт: {item['id']}")
         progress.progress((i+1)/len(items))
         time.sleep(2)
@@ -278,7 +282,8 @@ if auto_mode:
     for i, q in enumerate(quests):
         ans = generate_ai(groq_key, q.get('text',''), q['productDetails']['productName'], "Покупатель", custom_prompt, signature)
         if ans and "ОШИБКА" not in ans:
-            if send_wb(q['id'], ans, wb_token, "questions") == "OK":
+            res = send_wb(q['id'], ans, wb_token, "questions")
+            if res == "OK":
                 st.toast(f"Вопрос закрыт")
         time.sleep(2)
         
