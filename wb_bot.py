@@ -14,6 +14,12 @@ st.markdown("""
     .block-container {padding-top: 2rem; padding-bottom: 5rem;}
     .stTextArea textarea {font-size: 16px !important; line-height: 1.5;}
     div[data-testid="stExpander"] div[role="button"] p {font-size: 16px; font-weight: 600;}
+    .status-badge {
+        padding: 5px 10px;
+        border-radius: 5px;
+        font-size: 12px;
+        font-weight: bold;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -22,6 +28,7 @@ st.markdown("""
 # ==========================================
 
 def format_date(iso_date):
+    """Превращает дату в человеческий вид"""
     if not iso_date: return ""
     try:
         dt = datetime.datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
@@ -34,6 +41,7 @@ def format_date(iso_date):
 # ==========================================
 
 def get_wb_data(wb_token, mode="feedbacks", is_answered=False):
+    """Получает список отзывов или вопросов"""
     if len(wb_token) < 10: return []
     
     headers = {"Authorization": wb_token}
@@ -69,6 +77,7 @@ def get_wb_data(wb_token, mode="feedbacks", is_answered=False):
         return []
 
 def send_wb(review_id, text, wb_token, mode="feedbacks"):
+    """Отправляет ответ на WB"""
     headers = {"Authorization": wb_token}
     
     if not text or len(text) < 2:
@@ -84,6 +93,7 @@ def send_wb(review_id, text, wb_token, mode="feedbacks"):
 
         res = requests.patch(url, headers=headers, json=payload, timeout=15)
 
+        # 204 - ЭТО ТОЖЕ УСПЕХ
         if res.status_code == 200 or res.status_code == 204:
             return "OK"
         else:
@@ -97,8 +107,292 @@ def send_wb(review_id, text, wb_token, mode="feedbacks"):
 # ==========================================
 
 def generate_ai(api_key, text, item_name, user_name, instructions, signature):
+    """Генерирует ответ через Groq (Llama 3)"""
     if not api_key: return "Ошибка: Нет ключа Groq"
     
     client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
     
-    if user_name and user_name.lower() not in ["клиент", "покупатель
+    # Логика приветствия (Исправленная строка 104)
+    if user_name and user_name.lower() not in ["клиент", "покупатель", "none"] and len(user_name) > 1:
+        greeting = f"Здравствуйте, {user_name}!"
+    else:
+        greeting = "Здравствуйте!"
+
+    prompt = f"""
+    Роль: Менеджер поддержки бренда на Wildberries.
+    Товар: {item_name}
+    Сообщение от клиента: "{text}"
+    
+    Задача: Написать вежливый ответ на русском языке.
+    
+    Инструкция:
+    "{instructions}"
+    
+    ФОРМАТ:
+    1. {greeting}
+    2. (Пустая строка)
+    3. Текст ответа.
+    4. (Пустая строка)
+    5. {signature}
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            # ИСПОЛЬЗУЕМ НОВУЮ МОДЕЛЬ
+            model="llama-3.1-8b-instant", 
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.6,
+            max_tokens=700,
+            timeout=15
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"ОШИБКА ГЕНЕРАЦИИ: {e}"
+
+# ==========================================
+# 5. ИНТЕРФЕЙС И НАСТРОЙКИ
+# ==========================================
+
+if 'history' not in st.session_state: st.session_state['history'] = []
+if 'feedbacks' not in st.session_state: st.session_state['feedbacks'] = []
+if 'questions' not in st.session_state: st.session_state['questions'] = []
+
+# Загрузка ключей
+default_wb = ""
+default_groq = ""
+if hasattr(st, 'secrets'):
+    default_wb = st.secrets.get('WB_API_TOKEN', "")
+    default_groq = st.secrets.get('GROQ_API_KEY', "")
+
+with st.sidebar:
+    st.title("⚙️ Настройки")
+    
+    wb_token = st.text_input("WB API Token", value=default_wb, type="password")
+    groq_key = st.text_input("Groq API Key", value=default_groq, type="password")
+    
+    st.divider()
+    
+    st.subheader("🎭 Поведение бота")
+    custom_prompt = st.text_area("Инструкция:", value="Благодари за покупку. Если негатив - извинись и предложи решение.", height=100)
+    signature = st.text_input("Подпись:", value="С уважением, представитель бренда")
+    
+    st.divider()
+    
+    auto_mode = st.toggle("⚡ АВТО-РЕЖИМ (Фон)", value=False)
+    
+    st.markdown("---")
+    if st.button("🗑️ Сброс кэша"):
+        st.session_state.clear()
+        st.rerun()
+
+if not wb_token or not groq_key:
+    st.warning("👈 Введите ключи в меню слева.")
+    st.stop()
+
+# --- ОСНОВНАЯ ЧАСТЬ ---
+st.title("🛍️ WB AI Master")
+
+tab1, tab2, tab3 = st.tabs(["⭐ Отзывы", "❓ Вопросы", "🗄️ Архив ответов"])
+
+# ==========================================
+# Вкл 1: ОТЗЫВЫ
+# ==========================================
+with tab1:
+    col_btn, col_info = st.columns([1, 4])
+    if col_btn.button("🔄 Обновить отзывы", type="primary"):
+        with st.spinner("Загружаю..."):
+            st.session_state['feedbacks'] = get_wb_data(wb_token, "feedbacks", False)
+            
+    reviews = st.session_state['feedbacks']
+    
+    if not reviews:
+        st.info("Новых отзывов нет! 🎉")
+    else:
+        st.write(f"Очередь: {len(reviews)} шт.")
+        for rev in reviews:
+            with st.container(border=True):
+                c1, c2 = st.columns([3, 1])
+                c1.markdown(f"**{rev['productDetails']['productName']}**")
+                c1.write(f"{'⭐'*rev['productValuation']}")
+                c2.caption(format_date(rev['createdDate']))
+                
+                col_img, col_content = st.columns([1, 5])
+                
+                with col_img:
+                    if rev.get('photoLinks'):
+                        st.image(rev['photoLinks'][0]['smallSize'], use_container_width=True)
+                    else:
+                        st.markdown("📷")
+                
+                with col_content:
+                    user_name = rev.get('userName', 'Клиент')
+                    st.write(f"👤 **{user_name}:**")
+                    st.info(rev.get('text') if rev.get('text') else "*(Без текста)*")
+                    
+                    gen_key = f"ans_{rev['id']}"
+                    
+                    # КНОПКА ГЕНЕРАЦИИ
+                    if st.button(f"✨ Сгенерировать ответ", key=f"btn_{rev['id']}"):
+                        with st.spinner("Думаю..."):
+                            ans = generate_ai(groq_key, rev.get('text', ''), rev['productDetails']['productName'], user_name, custom_prompt, signature)
+                            
+                            if "ОШИБКА" in ans:
+                                st.error(ans)
+                            elif not ans:
+                                st.error("Пустой ответ от AI")
+                            else:
+                                st.session_state[gen_key] = ans
+                                st.rerun()
+                    
+                    val = st.session_state.get(gen_key, "")
+                    final_txt = st.text_area("Текст ответа:", value=val, height=150, key=f"area_{rev['id']}")
+                    
+                    # КНОПКА ОТПРАВКИ
+                    if st.button("🚀 Отправить на WB", key=f"snd_{rev['id']}"):
+                        res = send_wb(rev['id'], final_txt, wb_token, "feedbacks")
+                        if res == "OK":
+                            st.success("Ответ опубликован!")
+                            time.sleep(1)
+                            # Удаляем из списка
+                            st.session_state['feedbacks'] = [r for r in st.session_state['feedbacks'] if r['id'] != rev['id']]
+                            st.rerun()
+                        else:
+                            st.error(res)
+
+# ==========================================
+# Вкл 2: ВОПРОСЫ
+# ==========================================
+with tab2:
+    if st.button("🔄 Обновить вопросы", type="primary"):
+        with st.spinner("Загружаю..."):
+            st.session_state['questions'] = get_wb_data(wb_token, "questions", False)
+            
+    quests = st.session_state['questions']
+    
+    if not quests:
+        st.info("Вопросов нет! 🎉")
+    else:
+        st.write(f"Очередь: {len(quests)} шт.")
+        for q in quests:
+            with st.container(border=True):
+                st.markdown(f"❓ **{q['productDetails']['productName']}**")
+                st.caption(format_date(q['createdDate']))
+                st.write(f"**Вопрос:** {q.get('text', '')}")
+                
+                q_key = f"q_ans_{q['id']}"
+                
+                # КНОПКА ГЕНЕРАЦИИ
+                if st.button("✨ Придумать ответ", key=f"btn_q_{q['id']}"):
+                    with st.spinner("Генерирую..."):
+                        q_prompt = custom_prompt + " Это ВОПРОС ПОКУПАТЕЛЯ. Ответь конкретно и помоги."
+                        ans = generate_ai(groq_key, q.get('text', ''), q['productDetails']['productName'], "Покупатель", q_prompt, signature)
+                        
+                        if "ОШИБКА" in ans:
+                            st.error(ans)
+                        else:
+                            st.session_state[q_key] = ans
+                            st.rerun()
+
+                val_q = st.session_state.get(q_key, "")
+                final_q = st.text_area("Ответ:", value=val_q, height=150, key=f"area_q_{q['id']}")
+                
+                # КНОПКА ОТПРАВКИ
+                if st.button("🚀 Отправить", key=f"snd_q_{q['id']}"):
+                    res = send_wb(q['id'], final_q, wb_token, "questions")
+                    if res == "OK":
+                        st.success("Ответ на вопрос отправлен!")
+                        time.sleep(1)
+                        st.session_state['questions'] = [x for x in st.session_state['questions'] if x['id'] != q['id']]
+                        st.rerun()
+                    else:
+                        st.error(res)
+
+# ==========================================
+# Вкл 3: АРХИВ
+# ==========================================
+with tab3:
+    if st.button("📥 Скачать историю с WB"):
+        with st.spinner("Загружаю архив..."):
+            st.session_state['history'] = get_wb_data(wb_token, "feedbacks", True)
+    
+    history = st.session_state.get('history', [])
+    
+    if not history:
+        st.info("История пуста или не загружена.")
+    else:
+        for item in history:
+            with st.container(border=True):
+                col1, col2 = st.columns([1, 6])
+                with col1:
+                    if item.get('photoLinks'):
+                        st.image(item['photoLinks'][0]['smallSize'], use_container_width=True)
+                    else:
+                        st.write("📦")
+                with col2:
+                    st.caption(format_date(item['createdDate']))
+                    st.markdown(f"**{item['productDetails']['productName']}** {'⭐'*item['productValuation']}")
+                    
+                    user = item.get('userName', 'Клиент')
+                    st.write(f"👤 **{user}:** {item.get('text', '')}")
+                    
+                    st.divider()
+                    
+                    ans_data = item.get('answer')
+                    if ans_data and 'text' in ans_data:
+                        st.markdown(f"✅ **Ответ:**")
+                        st.caption(ans_data['text'])
+                    else:
+                        st.warning("⚠️ Ответ есть в системе, но текст не загрузился.")
+
+# ==========================================
+# АВТОМАТИЧЕСКИЙ РЕЖИМ
+# ==========================================
+if auto_mode:
+    st.markdown("---")
+    st.subheader("⚡ Авто-режим активен")
+    
+    status_log = st.empty()
+    progress = st.progress(0)
+    
+    # 1. Отзывы
+    revs = get_wb_data(wb_token, "feedbacks", False)
+    total = len(revs)
+    
+    for i, r in enumerate(revs):
+        prod = r['productDetails']['productName']
+        user = r.get('userName', 'Клиент')
+        status_log.write(f"🔄 [Отзыв {i+1}/{total}] {prod}...")
+        
+        ans = generate_ai(groq_key, r.get('text',''), prod, user, custom_prompt, signature)
+        
+        if ans and "ОШИБКА" not in ans and len(ans) > 5:
+            res = send_wb(r['id'], ans, wb_token, "feedbacks")
+            if res == "OK":
+                st.toast(f"✅ Отзыв {i+1} закрыт!")
+            else:
+                st.error(f"Сбой отправки: {res}")
+        
+        progress.progress((i + 1) / (total + 1) if total > 0 else 100)
+        time.sleep(3)
+        
+    # 2. Вопросы
+    qs = get_wb_data(wb_token, "questions", False)
+    total_q = len(qs)
+    
+    for i, q in enumerate(qs):
+        prod = q['productDetails']['productName']
+        status_log.write(f"🔄 [Вопрос {i+1}/{total_q}] {prod}...")
+        
+        q_prompt = custom_prompt + " Это вопрос. Ответь полезно."
+        ans = generate_ai(groq_key, q.get('text',''), prod, "Покупатель", q_prompt, signature)
+        
+        if ans and "ОШИБКА" not in ans:
+            res = send_wb(q['id'], ans, wb_token, "questions")
+            if res == "OK":
+                st.toast(f"✅ Вопрос {i+1} закрыт!")
+                
+        time.sleep(3)
+
+    status_log.success("🎉 Цикл завершен! Жду 60 сек...")
+    time.sleep(60)
+    st.rerun()
