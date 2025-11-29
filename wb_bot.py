@@ -7,7 +7,7 @@ from openai import OpenAI
 # ==========================================
 # 1. НАСТРОЙКИ СТРАНИЦЫ
 # ==========================================
-st.set_page_config(page_title="WB AI Master v14", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="WB AI Master v15 (Smart Fix)", layout="wide", page_icon="🛍️")
 
 st.markdown("""
     <style>
@@ -61,29 +61,37 @@ def send_wb(review_id, text, wb_token, mode="feedbacks"):
     
     try:
         if mode == "feedbacks":
-            # --- ОТЗЫВЫ ---
+            # --- ОТЗЫВЫ (ТУТ ВСЁ ОК) ---
             url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer"
             payload = {"id": review_id, "text": text}
-        else:
-            # --- ВОПРОСЫ ---
-            # 1. Ссылка БЕЗ /answer (правильная)
-            # 2. State ОБЯЗАТЕЛЕН и должен быть "wbViewed"
-            url = "https://feedbacks-api.wildberries.ru/api/v1/questions"
-            payload = {
-                "id": review_id,
-                "answer": {"text": text},
-                "state": "wbViewed" 
-            }
-        
-        # PATCH запрос
-        res = requests.patch(url, headers=headers, json=payload, timeout=15)
-        
-        # 200 и 204 - это успех
-        if res.status_code in [200, 204]: 
-            return "OK"
-        else: 
+            res = requests.patch(url, headers=headers, json=payload, timeout=15)
+            if res.status_code in [200, 204]: return "OK"
             return f"WB ERROR {res.status_code}: {res.text}"
             
+        else:
+            # --- ВОПРОСЫ (УМНЫЙ ПЕРЕБОР) ---
+            url = "https://feedbacks-api.wildberries.ru/api/v1/questions/answer" # Сначала пробуем /answer (некоторые аккаунты работают так)
+            
+            # Попытка 1: Обычный путь вопросов (без /answer) + wbViewed
+            url_v1 = "https://feedbacks-api.wildberries.ru/api/v1/questions"
+            payload_v1 = {"id": review_id, "answer": {"text": text}, "state": "wbViewed"}
+            
+            res = requests.patch(url_v1, headers=headers, json=payload_v1, timeout=10)
+            if res.status_code in [200, 204]: return "OK"
+            
+            # Если не вышло (Ошибка 400), пробуем статус "none"
+            if res.status_code == 400:
+                payload_v2 = {"id": review_id, "answer": {"text": text}, "state": "none"}
+                res2 = requests.patch(url_v1, headers=headers, json=payload_v2, timeout=10)
+                if res2.status_code in [200, 204]: return "OK (via none)"
+                
+                # Если и это не вышло, пробуем без статуса (null)
+                payload_v3 = {"id": review_id, "answer": {"text": text}, "state": None}
+                res3 = requests.patch(url_v1, headers=headers, json=payload_v3, timeout=10)
+                if res3.status_code in [200, 204]: return "OK (via null)"
+            
+            return f"Не ушло. Последняя ошибка: {res.text}"
+
     except Exception as e:
         return f"Сбой сети: {e}"
 
@@ -112,7 +120,7 @@ def generate_ai(api_key, text, item_name, user_name, instructions, signature):
     
     try:
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama-3.3-70b-versatile", # Самая умная модель
             messages=[{"role": "user", "content": prompt}],
             temperature=0.6,
             max_tokens=600,
@@ -156,7 +164,7 @@ if not wb_token or not groq_key:
     st.warning("Введите ключи.")
     st.stop()
 
-st.title("🛍️ WB AI Master v14")
+st.title("🛍️ WB AI Master v15")
 
 tab1, tab2, tab3 = st.tabs(["⭐ Отзывы", "❓ Вопросы", "🗄️ Архив"])
 
@@ -230,8 +238,8 @@ with tab2:
                 
                 if st.button("🚀 Отправить", key=f"snd_q_{q['id']}"):
                     res = send_wb(q['id'], final_q, wb_token, "questions")
-                    if res == "OK":
-                        st.success("Отправлено!")
+                    if "OK" in res:
+                        st.success("Отправлено! " + res)
                         time.sleep(1)
                         st.session_state['questions'] = [x for x in st.session_state['questions'] if x['id'] != q['id']]
                         st.rerun()
@@ -275,7 +283,7 @@ if auto_mode:
         ans = generate_ai(groq_key, q.get('text',''), prod, "Покупатель", custom_prompt, signature)
         if "ОШИБКА" not in ans and len(ans) > 5:
             res = send_wb(q['id'], ans, wb_token, "questions")
-            if res == "OK":
+            if "OK" in res:
                 st.toast(f"Вопрос закрыт")
             else:
                 st.error(f"Сбой отправки вопроса: {res}")
