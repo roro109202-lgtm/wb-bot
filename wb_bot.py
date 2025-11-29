@@ -7,7 +7,7 @@ from openai import OpenAI
 # ==========================================
 # 1. НАСТРОЙКИ СТРАНИЦЫ
 # ==========================================
-st.set_page_config(page_title="WB AI Master v9", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="WB AI Master v11", layout="wide", page_icon="🛍️")
 
 st.markdown("""
     <style>
@@ -61,16 +61,16 @@ def send_wb(review_id, text, wb_token, mode="feedbacks"):
     
     try:
         if mode == "feedbacks":
-            # ОТЗЫВЫ: Нужен /answer
+            # ОТЗЫВЫ
             url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer"
             payload = {"id": review_id, "text": text}
         else:
-            # ВОПРОСЫ: !!! ИСПРАВЛЕНИЕ !!! Ссылка БЕЗ /answer
-            url = "https://feedbacks-api.wildberries.ru/api/v1/questions"
+            # ВОПРОСЫ
+            # УБРАЛИ STATE, ОН ТУТ НЕ НУЖЕН
+            url = "https://feedbacks-api.wildberries.ru/api/v1/questions/answer"
             payload = {
                 "id": review_id,
-                "answer": {"text": text},
-                "state": "wbViewed" # Используем стандартный статус
+                "answer": {"text": text}
             }
         
         res = requests.patch(url, headers=headers, json=payload, timeout=15)
@@ -153,7 +153,7 @@ if not wb_token or not groq_key:
     st.warning("Введите ключи.")
     st.stop()
 
-st.title("🛍️ WB AI Master v9")
+st.title("🛍️ WB AI Master v11")
 
 tab1, tab2, tab3 = st.tabs(["⭐ Отзывы", "❓ Вопросы", "🗄️ Архив"])
 
@@ -238,7 +238,7 @@ with tab2:
 # --- АРХИВ ---
 with tab3:
     if st.button("📥 История"):
-        st.session_state['history'] = get_wb_data(wb_token, "feedbacks", True)
+        st.session_state['history'] = get_wb_data(wb_token, "feedbacks")
     for item in st.session_state.get('history', []):
         with st.container(border=True):
             if item.get('productDetails'):
