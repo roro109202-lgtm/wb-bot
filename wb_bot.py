@@ -45,6 +45,7 @@ def get_wb_data(wb_token, mode="feedbacks", is_answered=False):
     }
     
     try:
+        # Используем единый хост feedbacks-api
         if mode == "feedbacks":
             url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks"
             key = 'feedbacks'
@@ -61,7 +62,7 @@ def get_wb_data(wb_token, mode="feedbacks", is_answered=False):
             return []
         
         if res.status_code == 401:
-            st.error("Ошибка 401: Неверный токен WB (или истек).")
+            st.error("Ошибка 401: Неверный токен WB.")
         return []
         
     except Exception as e:
@@ -79,12 +80,14 @@ def send_wb(review_id, text, wb_token, mode="feedbacks"):
             url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer"
             payload = {"id": review_id, "text": text}
         else: # questions
+            # У вопросов другая структура payload
             url = "https://feedbacks-api.wildberries.ru/api/v1/questions/answer"
             payload = {"id": review_id, "answer": {"text": text}}
 
         res = requests.patch(url, headers=headers, json=payload, timeout=15)
 
-        if res.status_code == 200:
+        # 204 No Content - это успех для WB
+        if res.status_code == 200 or res.status_code == 204:
             return "OK"
         else:
             return f"Ошибка WB {res.status_code}: {res.text}"
@@ -108,37 +111,36 @@ def generate_ai(api_key, text, item_name, user_name, instructions, signature):
         greeting = "Здравствуйте!"
 
     prompt = f"""
-    Роль: Ты профессиональный менеджер поддержки бренда на Wildberries.
+    Роль: Менеджер поддержки на Wildberries.
     Товар: {item_name}
-    Сообщение от клиента: "{text}"
+    Сообщение: "{text}"
     
-    Твоя задача: Написать вежливый и полезный ответ на русском языке.
+    Задача: Написать вежливый и полезный ответ на русском языке.
+    Инструкция: "{instructions}"
     
-    Инструкция от владельца магазина:
-    "{instructions}"
-    
-    СТРОГИЕ ТРЕБОВАНИЯ К ФОРМАТУ:
-    1. Начни ответ с: "{greeting}"
-    2. Обязательно делай пустую строку между абзацами (двойной Enter).
-    3. В конце добавь подпись: "{signature}".
-    4. Не используй markdown (жирный шрифт и т.д.), только простой текст и эмодзи.
+    ФОРМАТ ОТВЕТА:
+    1. {greeting}
+    2. (Пустая строка)
+    3. Текст ответа (по существу).
+    4. (Пустая строка)
+    5. {signature}
     """
     
     try:
         response = client.chat.completions.create(
-            # !!! ВОТ ТУТ МЫ ПОСТАВИЛИ САМУЮ НОВУЮ МОДЕЛЬ !!!
+            # Используем актуальную модель
             model="llama-3.1-8b-instant", 
             messages=[{"role": "user", "content": prompt}],
             temperature=0.6,
             max_tokens=600,
-            timeout=10
+            timeout=15
         )
         return response.choices[0].message.content
     except Exception as e:
         return f"ОШИБКА ГЕНЕРАЦИИ: {e}"
 
 # ==========================================
-# 5. ИНТЕРФЕЙС И НАСТРОЙКИ
+# 5. ИНТЕРФЕЙС
 # ==========================================
 
 if 'history' not in st.session_state: st.session_state['history'] = []
@@ -161,7 +163,7 @@ with st.sidebar:
     st.divider()
     
     st.subheader("🎭 Поведение бота")
-    custom_prompt = st.text_area("Инструкция:", value="Благодари за покупку. Если есть негатив - извиняйся и предлагай связаться с поддержкой.", height=100)
+    custom_prompt = st.text_area("Инструкция:", value="Благодари за покупку. На вопросы отвечай конкретно.", height=100)
     signature = st.text_input("Подпись:", value="С уважением, представитель бренда")
     
     st.divider()
@@ -174,7 +176,7 @@ with st.sidebar:
         st.rerun()
 
 if not wb_token or not groq_key:
-    st.warning("👈 Пожалуйста, введите ключи в меню слева для начала работы.")
+    st.warning("👈 Введите ключи в меню слева.")
     st.stop()
 
 # --- ОСНОВНАЯ ЧАСТЬ ---
@@ -188,7 +190,7 @@ tab1, tab2, tab3 = st.tabs(["⭐ Отзывы", "❓ Вопросы", "🗄️ �
 with tab1:
     col_btn, col_info = st.columns([1, 4])
     if col_btn.button("🔄 Обновить отзывы", type="primary"):
-        with st.spinner("Загружаю отзывы..."):
+        with st.spinner("Загружаю..."):
             st.session_state['feedbacks'] = get_wb_data(wb_token, "feedbacks", False)
             
     reviews = st.session_state['feedbacks']
@@ -205,13 +207,11 @@ with tab1:
                 c2.caption(format_date(rev['createdDate']))
                 
                 col_img, col_content = st.columns([1, 5])
-                
                 with col_img:
                     if rev.get('photoLinks'):
                         st.image(rev['photoLinks'][0]['smallSize'], use_container_width=True)
                     else:
-                        st.markdown("📷 *Нет фото*")
-                
+                        st.markdown("📷")
                 with col_content:
                     user_name = rev.get('userName', 'Клиент')
                     st.write(f"👤 **{user_name}:**")
@@ -219,10 +219,10 @@ with tab1:
                     
                     gen_key = f"ans_{rev['id']}"
                     
+                    # ГЕНЕРАЦИЯ
                     if st.button(f"✨ Сгенерировать ответ", key=f"btn_{rev['id']}"):
                         with st.spinner("Думаю..."):
                             ans = generate_ai(groq_key, rev.get('text', ''), rev['productDetails']['productName'], user_name, custom_prompt, signature)
-                            
                             if "ОШИБКА" in ans:
                                 st.error(ans)
                             else:
@@ -232,6 +232,7 @@ with tab1:
                     val = st.session_state.get(gen_key, "")
                     final_txt = st.text_area("Текст ответа:", value=val, height=150, key=f"area_{rev['id']}")
                     
+                    # ОТПРАВКА
                     if st.button("🚀 Отправить на WB", key=f"snd_{rev['id']}"):
                         res = send_wb(rev['id'], final_txt, wb_token, "feedbacks")
                         if res == "OK":
@@ -243,11 +244,11 @@ with tab1:
                             st.error(res)
 
 # ==========================================
-# Вкл 2: ВОПРОСЫ
+# Вкл 2: ВОПРОСЫ (ТЕПЕРЬ ПОЛНОСТЬЮ РАБОТАЕТ)
 # ==========================================
 with tab2:
     if st.button("🔄 Обновить вопросы", type="primary"):
-        with st.spinner("Загружаю вопросы..."):
+        with st.spinner("Загружаю..."):
             st.session_state['questions'] = get_wb_data(wb_token, "questions", False)
             
     quests = st.session_state['questions']
@@ -264,9 +265,11 @@ with tab2:
                 
                 q_key = f"q_ans_{q['id']}"
                 
+                # КНОПКА ГЕНЕРАЦИИ ДЛЯ ВОПРОСА
                 if st.button("✨ Придумать ответ", key=f"btn_q_{q['id']}"):
                     with st.spinner("Генерирую..."):
-                        q_prompt = custom_prompt + " Это ВОПРОС ПОКУПАТЕЛЯ О ТОВАРЕ. Дай конкретный и полезный ответ."
+                        q_prompt = custom_prompt + " Это ВОПРОС ПОКУПАТЕЛЯ. Ответь конкретно и помоги."
+                        # У вопросов обычно нет имени, передаем "Покупатель"
                         ans = generate_ai(groq_key, q.get('text', ''), q['productDetails']['productName'], "Покупатель", q_prompt, signature)
                         
                         if "ОШИБКА" in ans:
@@ -278,11 +281,14 @@ with tab2:
                 val_q = st.session_state.get(q_key, "")
                 final_q = st.text_area("Ответ:", value=val_q, height=150, key=f"area_q_{q['id']}")
                 
+                # КНОПКА ОТПРАВКИ ВОПРОСА
                 if st.button("🚀 Отправить", key=f"snd_q_{q['id']}"):
+                    # Используем mode="questions"
                     res = send_wb(q['id'], final_q, wb_token, "questions")
                     if res == "OK":
-                        st.success("Отправлено!")
+                        st.success("Ответ на вопрос отправлен!")
                         time.sleep(1)
+                        # Удаляем из списка
                         st.session_state['questions'] = [x for x in st.session_state['questions'] if x['id'] != q['id']]
                         st.rerun()
                     else:
@@ -292,15 +298,14 @@ with tab2:
 # Вкл 3: АРХИВ (ИСТОРИЯ)
 # ==========================================
 with tab3:
-    col_h1, col_h2 = st.columns([1, 4])
-    if col_h1.button("📥 Скачать историю с WB"):
-        with st.spinner("Загружаю архив отвеченных..."):
+    if st.button("📥 Скачать историю с WB"):
+        with st.spinner("Загружаю архив..."):
             st.session_state['history'] = get_wb_data(wb_token, "feedbacks", True)
     
     history = st.session_state.get('history', [])
     
     if not history:
-        st.info("История пуста или не загружена. Нажмите кнопку выше.")
+        st.info("История пуста или не загружена.")
     else:
         for item in history:
             with st.container(border=True):
@@ -343,19 +348,16 @@ if auto_mode:
     for i, r in enumerate(revs):
         prod = r['productDetails']['productName']
         user = r.get('userName', 'Клиент')
-        
         status_log.write(f"🔄 [Отзыв {i+1}/{total}] {prod}...")
         
         ans = generate_ai(groq_key, r.get('text',''), prod, user, custom_prompt, signature)
         
-        if ans and "ОШИБКА" not in ans:
+        if ans and "ОШИБКА" not in ans and len(ans) > 5:
             res = send_wb(r['id'], ans, wb_token, "feedbacks")
             if res == "OK":
                 st.toast(f"✅ Отзыв {i+1} закрыт!")
             else:
                 st.error(f"Сбой отправки: {res}")
-        
-        progress.progress((i + 1) / (total + 1) if total > 0 else 100)
         time.sleep(3)
         
     # 2. Вопросы
@@ -367,7 +369,7 @@ if auto_mode:
         status_log.write(f"🔄 [Вопрос {i+1}/{total_q}] {prod}...")
         
         q_prompt = custom_prompt + " Это вопрос. Ответь полезно."
-        ans = generate_ai(groq_key, q.get('text',''), prod, "Клиент", q_prompt, signature)
+        ans = generate_ai(groq_key, q.get('text',''), prod, "Покупатель", q_prompt, signature)
         
         if ans and "ОШИБКА" not in ans:
             res = send_wb(q['id'], ans, wb_token, "questions")
@@ -376,6 +378,6 @@ if auto_mode:
                 
         time.sleep(3)
 
-    status_log.success("🎉 Цикл завершен! Следующая проверка через 60 секунд...")
+    status_log.success("🎉 Цикл завершен! Жду 60 сек...")
     time.sleep(60)
     st.rerun()
