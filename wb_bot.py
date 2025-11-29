@@ -7,7 +7,7 @@ from openai import OpenAI
 # ==========================================
 # 1. НАСТРОЙКИ СТРАНИЦЫ
 # ==========================================
-st.set_page_config(page_title="WB AI Master v7 (Final)", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="WB AI Master v8 (Final Fix)", layout="wide", page_icon="🛍️")
 
 st.markdown("""
     <style>
@@ -61,16 +61,16 @@ def send_wb(review_id, text, wb_token, mode="feedbacks"):
     
     try:
         if mode == "feedbacks":
-            # Для ОТЗЫВОВ адрес заканчивается на /answer
+            # ОТЗЫВЫ
             url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer"
             payload = {"id": review_id, "text": text}
         else:
-            # ДЛЯ ВОПРОСОВ адрес ПРОСТО /questions (БЕЗ answer!)
-            url = "https://feedbacks-api.wildberries.ru/api/v1/questions"
+            # ВОПРОСЫ (ИСПРАВЛЕНО: state="none")
+            url = "https://feedbacks-api.wildberries.ru/api/v1/questions/answer"
             payload = {
                 "id": review_id,
                 "answer": {"text": text},
-                "state": "wbViewed"
+                "state": "none"  # !!! ВОТ ЗДЕСЬ БЫЛА ОШИБКА, ТЕПЕРЬ ИСПРАВЛЕНО !!!
             }
         
         res = requests.patch(url, headers=headers, json=payload, timeout=15)
@@ -153,7 +153,7 @@ if not wb_token or not groq_key:
     st.warning("Введите ключи.")
     st.stop()
 
-st.title("🛍️ WB AI Master v7")
+st.title("🛍️ WB AI Master v8")
 
 tab1, tab2, tab3 = st.tabs(["⭐ Отзывы", "❓ Вопросы", "🗄️ Архив"])
 
@@ -233,15 +233,19 @@ with tab2:
                         st.session_state['questions'] = [x for x in st.session_state['questions'] if x['id'] != q['id']]
                         st.rerun()
                     else:
-                        st.error(res) 
+                        st.error(res)
 
 # --- АРХИВ ---
 with tab3:
     if st.button("📥 История"):
-        st.session_state['history'] = get_wb_data(wb_token, "feedbacks") # Для истории флаг isAnswered не работает через этот endpoint так, как нам нужно, берем общим списком
-    
-    # Можно доработать логику истории, но пока оставим базовую
-    st.info("Функция истории в разработке.")
+        st.session_state['history'] = get_wb_data(wb_token, "feedbacks")
+    for item in st.session_state.get('history', []):
+        with st.container(border=True):
+            if item.get('productDetails'):
+                st.write(f"**{item['productDetails'].get('productName','')}**")
+            st.write(f"👤 {item.get('text', '')}")
+            if item.get('answer'):
+                st.info(item['answer']['text'])
 
 # --- АВТО-РЕЖИМ ---
 if auto_mode:
@@ -254,8 +258,11 @@ if auto_mode:
         prod = item.get('productDetails', {}).get('productName', 'Товар')
         ans = generate_ai(groq_key, item.get('text',''), prod, "Клиент", custom_prompt, signature)
         if "ОШИБКА" not in ans and len(ans) > 5:
-            if send_wb(item['id'], ans, wb_token, "feedbacks") == "OK":
+            res = send_wb(item['id'], ans, wb_token, "feedbacks")
+            if res == "OK":
                 st.toast(f"Отзыв закрыт: {item['id']}")
+            else:
+                st.error(f"Сбой отправки отзыва: {res}")
         time.sleep(2)
         
     # 2. Вопросы
@@ -264,8 +271,11 @@ if auto_mode:
         prod = q.get('productDetails', {}).get('productName', 'Товар')
         ans = generate_ai(groq_key, q.get('text',''), prod, "Покупатель", custom_prompt, signature)
         if "ОШИБКА" not in ans and len(ans) > 5:
-            if send_wb(q['id'], ans, wb_token, "questions") == "OK":
+            res = send_wb(q['id'], ans, wb_token, "questions")
+            if res == "OK":
                 st.toast(f"Вопрос закрыт")
+            else:
+                st.error(f"Сбой отправки вопроса: {res}")
         time.sleep(2)
     
     st.success("Пауза 60 сек...")
