@@ -37,12 +37,12 @@ def send_wb_reply(review_id, text, wb_token):
     except:
         return False
 
-# --- НОВАЯ ФУНКЦИЯ GEMINI (ПРЯМОЙ ЗАПРОС) ---
+# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ (GEMINI PRO 1.0) ---
 def generate_gemini_direct(api_key, text, rating, product, signature):
     if not api_key: return "Ошибка: Нет ключа"
 
-    # Прямая ссылка на API Google (Flash модель)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # !!! ВАЖНОЕ ИЗМЕНЕНИЕ: ИСПОЛЬЗУЕМ СТАРУЮ, НО СТАБИЛЬНУЮ ССЫЛКУ !!!
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
     
     if rating >= 4:
         tone = "позитивный, благодарный"
@@ -60,7 +60,6 @@ def generate_gemini_direct(api_key, text, rating, product, signature):
     Длина: 2-3 предложения.
     """
     
-    # Формируем JSON вручную
     payload = {
         "contents": [{
             "parts": [{"text": prompt_text}]
@@ -74,18 +73,17 @@ def generate_gemini_direct(api_key, text, rating, product, signature):
     }
 
     try:
-        # Отправляем обычный веб-запрос
         response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
-            # Достаем текст из сложной структуры ответа Google
             try:
                 return data['candidates'][0]['content']['parts'][0]['text']
             except:
                 return "Ошибка: Google прислал пустой ответ"
         else:
-            return f"Ошибка Google API: {response.status_code} ({response.text})"
+            # Выводим точный текст ошибки от Google для отладки
+            return f"Google Error: {response.status_code} {response.text}"
             
     except Exception as e:
         return f"Ошибка соединения: {e}"
@@ -98,7 +96,7 @@ def add_history(prod, rev, ans, rate):
 
 # --- 4. ИНТЕРФЕЙС ---
 
-st.title("🤖 WB AI Manager (Direct)")
+st.title("🤖 WB AI Manager (Pro Stable)")
 
 with st.sidebar:
     st.header("Настройки")
@@ -123,7 +121,7 @@ if not wb_token or not gemini_key:
 # --- 5. ЛОГИКА ---
 
 if auto_mode:
-    st.info("Авто-режим активен")
+    st.info("Авто-режим активен (Gemini Pro)")
     status = st.empty()
     reviews = get_wb_reviews(wb_token)
     
@@ -139,17 +137,17 @@ if auto_mode:
         
         status.warning(f"Обрабатываю: {prod}")
         
-        # Генерация через ПРЯМОЙ запрос
+        # Генерация
         ans = generate_gemini_direct(gemini_key, text, rating, prod, brand_sign)
         
-        if ans and "Ошибка" not in ans:
+        if ans and "Error" not in ans and "Ошибка" not in ans:
             if send_wb_reply(review['id'], ans, wb_token):
                 add_history(prod, text, ans, rating)
                 st.toast(f"Отправлено: {prod}")
             else:
                 st.error("Ошибка WB")
         else:
-            st.error(f"Ошибка AI: {ans}")
+            st.error(f"{ans}")
             
         time.sleep(5)
         
@@ -177,7 +175,6 @@ else:
                 with st.expander(f"{'⭐'*rating} {prod}", expanded=True):
                     st.write(txt)
                     if st.button("✨ Генерировать", key=f"g_{rid}"):
-                        # Используем новую функцию
                         ans = generate_gemini_direct(gemini_key, txt, rating, prod, brand_sign)
                         st.session_state['generated_answers'][rid] = ans
                     
