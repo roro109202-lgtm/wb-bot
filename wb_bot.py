@@ -5,7 +5,7 @@ import datetime
 from openai import OpenAI
 
 # --- 1. НАСТРОЙКИ ---
-st.set_page_config(page_title="WB DeepSeek Bot", layout="wide")
+st.set_page_config(page_title="WB AI Manager (Groq)", layout="wide")
 
 # --- 2. ПАМЯТЬ ---
 if 'history' not in st.session_state: st.session_state['history'] = []
@@ -37,14 +37,14 @@ def send_wb_reply(review_id, text, wb_token):
     except:
         return False
 
-# --- ФУНКЦИИ DEEPSEEK ---
-def generate_deepseek(api_key, text, rating, product, signature):
+# --- ФУНКЦИЯ GROQ (LLAMA 3) ---
+def generate_groq(api_key, text, rating, product, signature):
     if not api_key: return "Ошибка: Нет ключа"
 
-    # Подключаемся к DeepSeek через библиотеку OpenAI
+    # Подключаемся к Groq через библиотеку OpenAI
     client = OpenAI(
         api_key=api_key, 
-        base_url="https://api.deepseek.com"  # Важный адрес!
+        base_url="https://api.groq.com/openai/v1"
     )
 
     if rating >= 4:
@@ -55,27 +55,27 @@ def generate_deepseek(api_key, text, rating, product, signature):
         goal = "отработать негатив"
 
     prompt = f"""
-    Роль: Сотрудник поддержки Wildberries.
+    Ты сотрудник поддержки на Wildberries.
     Товар: {product}
     Отзыв: "{text}" ({rating} звезд).
-    Задача: Напиши ответ ({tone}, {goal}).
+    Напиши ответ ({tone}, {goal}).
     Обязательно добавь подпись: "{signature}".
-    Ответ должен быть кратким (2-3 предложения), без лишней воды.
+    Ответ должен быть кратким (2-3 предложения), на русском языке.
     """
     
     try:
         response = client.chat.completions.create(
-            model="deepseek-chat", # Используем их основную модель
+            model="llama-3.3-70b-versatile", # Мощная бесплатная модель
             messages=[
-                {"role": "system", "content": "Ты помощник селлера."},
+                {"role": "system", "content": "Ты полезный ассистент, говоришь по-русски."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.7,
-            timeout=15
+            temperature=0.6,
+            timeout=10
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Ошибка DeepSeek: {e}"
+        return f"Ошибка Groq: {e}"
 
 def add_history(prod, rev, ans, rate):
     st.session_state['history'].insert(0, {
@@ -85,27 +85,28 @@ def add_history(prod, rev, ans, rate):
 
 # --- 4. ИНТЕРФЕЙС ---
 
-st.title("🐳 WB DeepSeek Manager")
+st.title("⚡ WB AI Manager (Groq Free)")
 
 with st.sidebar:
     st.header("Настройки")
     
-    # Ключи
     my_wb = ""
-    my_ds = ""
+    my_groq = ""
     if hasattr(st, 'secrets'):
         my_wb = st.secrets.get('WB_API_TOKEN', "")
-        # Ищем любой ключ, похожий на дипсик или опенаи
-        my_ds = st.secrets.get('DEEPSEEK_API_KEY', st.secrets.get('OPENAI_API_KEY', ""))
+        # Пытаемся найти ключ, даже если он назван по-старому
+        my_groq = st.secrets.get('GROQ_API_KEY', st.secrets.get('DEEPSEEK_API_KEY', ""))
             
     wb_token = st.text_input("WB Token", value=my_wb, type="password")
-    deepseek_key = st.text_input("DeepSeek Key (sk-...)", value=my_ds, type="password")
+    groq_key = st.text_input("Groq API Key (gsk-...)", value=my_groq, type="password")
     brand_sign = st.text_input("Подпись", value="С уважением, представитель бренда")
     
     st.divider()
     auto_mode = st.toggle("⚡ АВТО-РЕЖИМ", value=False)
+    if auto_mode:
+        st.info("Скорость Groq позволяет обрабатывать отзывы очень быстро.")
 
-if not wb_token or not deepseek_key:
+if not wb_token or not groq_key:
     st.warning("Введите ключи слева.")
     st.stop()
 
@@ -125,10 +126,10 @@ if auto_mode:
         text = review.get('text', '')
         rating = review['productValuation']
         
-        status.warning(f"DeepSeek пишет: {prod}...")
+        status.warning(f"Llama пишет ответ: {prod}...")
         
         # Генерация
-        ans = generate_deepseek(deepseek_key, text, rating, prod, brand_sign)
+        ans = generate_groq(groq_key, text, rating, prod, brand_sign)
         
         if ans and "Ошибка" not in ans:
             if send_wb_reply(review['id'], ans, wb_token):
@@ -139,9 +140,9 @@ if auto_mode:
         else:
             st.error(f"{ans}")
             
-        time.sleep(5)
+        time.sleep(3) # Groq очень быстрый, 3 сек достаточно
         
-    st.success("Готово! Перезапуск...")
+    st.success("Пачка готова! Перезапуск...")
     time.sleep(60)
     st.rerun()
 
@@ -164,8 +165,8 @@ else:
                 
                 with st.expander(f"{'⭐'*rating} {prod}", expanded=True):
                     st.write(txt)
-                    if st.button("✨ DeepSeek Генерировать", key=f"g_{rid}"):
-                        ans = generate_deepseek(deepseek_key, txt, rating, prod, brand_sign)
+                    if st.button("✨ Генерировать (Groq)", key=f"g_{rid}"):
+                        ans = generate_groq(groq_key, txt, rating, prod, brand_sign)
                         st.session_state['generated_answers'][rid] = ans
                     
                     val = st.session_state['generated_answers'].get(rid, "")
