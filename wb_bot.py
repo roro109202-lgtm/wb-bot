@@ -5,10 +5,10 @@ import datetime
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-# --- 1. НАСТРОЙКИ СТРАНИЦЫ (Должно быть первой строкой) ---
+# --- 1. НАСТРОЙКИ СТРАНИЦЫ ---
 st.set_page_config(page_title="WB AI Manager", layout="wide")
 
-# --- 2. ИНИЦИАЛИЗАЦИЯ ПАМЯТИ ---
+# --- 2. ПАМЯТЬ ПРИЛОЖЕНИЯ ---
 if 'history' not in st.session_state:
     st.session_state['history'] = []
 if 'reviews' not in st.session_state:
@@ -16,7 +16,7 @@ if 'reviews' not in st.session_state:
 if 'generated_answers' not in st.session_state:
     st.session_state['generated_answers'] = {}
 
-# --- 3. ФУНКЦИИ ЛОГИКИ ---
+# --- 3. ФУНКЦИИ ---
 
 def get_wb_reviews(wb_token):
     if len(wb_token) < 10: return []
@@ -44,35 +44,43 @@ def send_wb_reply(review_id, text, wb_token):
 def generate_gemini(api_key, text, rating, product, signature):
     if not api_key: return "Ошибка: Нет ключа Gemini"
     
+    # Подключение ключа
     genai.configure(api_key=api_key)
     
-    # Пытаемся взять быструю модель, если нет - обычную
+    # ИСПОЛЬЗУЕМ GEMINI-PRO (Самая стабильная версия)
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-    except:
         model = genai.GenerativeModel('gemini-pro')
+    except:
+        return "Ошибка: Не удалось подключить модель gemini-pro"
 
     if rating >= 4:
         tone = "позитивный, благодарный"
-        goal = "поблагодарить клиента"
+        goal = "поблагодарить клиента за выбор"
     else:
         tone = "вежливый, извиняющийся"
-        goal = "отработать негатив"
+        goal = "снять негатив и помочь"
 
     prompt = f"""
-    Роль: Поддержка магазина на Wildberries.
+    Роль: Ты сотрудник поддержки бренда на Wildberries.
     Товар: {product}
-    Отзыв: "{text}" ({rating} звезд).
-    Напиши ответ ({tone}, {goal}).
-    В конце подпись: "{signature}".
-    Ответ должен быть кратким (2-3 предложения).
+    Отзыв клиента: "{text}"
+    Оценка: {rating} звезд.
+    
+    Задание: Напиши ответ на этот отзыв.
+    Тон: {tone}. Цель: {goal}.
+    Обязательно добавь в конце подпись: "{signature}".
+    Ответ должен быть кратким (не более 3 предложений).
     """
     
+    # Настройки безопасности (отключаем блокировку, чтобы бот не молчал)
+    safe = {
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE
+    }
+    
     try:
-        safe = {
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE
-        }
         response = model.generate_content(prompt, safety_settings=safe)
         return response.text
     except Exception as e:
@@ -86,23 +94,20 @@ def add_history(prod, rev, ans, rate):
 
 # --- 4. ИНТЕРФЕЙС ---
 
-st.title("🤖 WB AI Reviews (Gemini)")
+st.title("🤖 WB AI Reviews (Gemini Pro)")
 
-# Сайдбар (Всегда виден)
+# Сайдбар
 with st.sidebar:
     st.header("Настройки")
     
-    # Попытка достать ключи из Secrets
+    # Пытаемся найти ключи в Secrets или берем из полей ввода
     my_wb_token = ""
     my_gemini_key = ""
     
     if hasattr(st, 'secrets'):
-        if 'WB_API_TOKEN' in st.secrets:
-            my_wb_token = st.secrets['WB_API_TOKEN']
-        if 'GEMINI_API_KEY' in st.secrets:
-            my_gemini_key = st.secrets['GEMINI_API_KEY']
+        if 'WB_API_TOKEN' in st.secrets: my_wb_token = st.secrets['WB_API_TOKEN']
+        if 'GEMINI_API_KEY' in st.secrets: my_gemini_key = st.secrets['GEMINI_API_KEY']
             
-    # Если в Secrets пусто, даем поля ввода
     wb_token = st.text_input("WB Token", value=my_wb_token, type="password")
     gemini_key = st.text_input("Gemini Key", value=my_gemini_key, type="password")
     
@@ -111,23 +116,21 @@ with st.sidebar:
     auto_mode = st.toggle("⚡ АВТО-РЕЖИМ", value=False)
     
     if auto_mode:
-        st.info("Бот будет проверять отзывы каждую минуту.")
+        st.info("Бот проверяет отзывы раз в минуту.")
 
-# ПРОВЕРКА КЛЮЧЕЙ (Чтобы не было пустого экрана)
 if not wb_token or not gemini_key:
-    st.warning("👈 Пожалуйста, введите API ключи в меню слева (или добавьте их в Secrets).")
-    st.info("Без ключей программа не может работать.")
-    st.stop() # Останавливаем только ПОСЛЕ отрисовки предупреждения
+    st.warning("⚠️ Введите ключи в меню слева для начала работы.")
+    st.stop()
 
-# --- 5. ОСНОВНАЯ ЛОГИКА ---
+# --- 5. ЛОГИКА РАБОТЫ ---
 
-# Если включен авто-режим
+# АВТО-РЕЖИМ
 if auto_mode:
     status = st.empty()
     reviews = get_wb_reviews(wb_token)
     
     if not reviews:
-        status.success("🎉 Нет новых отзывов. Жду 60 секунд...")
+        status.success("Новых отзывов нет. Жду минуту...")
         time.sleep(60)
         st.rerun()
     
@@ -136,7 +139,7 @@ if auto_mode:
         text = review.get('text', '')
         rating = review['productValuation']
         
-        status.warning(f"🤖 Обрабатываю ({i+1}/{len(reviews)}): {prod}")
+        status.warning(f"🤖 Думаю над ответом ({i+1}/{len(reviews)}): {prod}")
         
         # Генерация
         ans = generate_gemini(gemini_key, text, rating, prod, brand_sign)
@@ -147,28 +150,28 @@ if auto_mode:
                 add_history(prod, text, ans, rating)
                 st.toast(f"Отправлено: {prod}")
             else:
-                st.error(f"Сбой отправки WB: {prod}")
+                st.error(f"Не ушло на WB: {prod}")
         else:
-            st.error(f"Сбой генерации: {prod} -> {ans}")
+            st.error(f"Не смог сгенерировать: {prod}. Причина: {ans}")
             
-        time.sleep(5) # Пауза чтобы не забанили
+        time.sleep(5) # Пауза
         
-    st.success("Цикл завершен! Перезапуск через минуту...")
+    st.success("Все обработано! Перезапуск через минуту...")
     time.sleep(60)
     st.rerun()
 
-# Если ручной режим
+# РУЧНОЙ РЕЖИМ
 else:
     tab1, tab2 = st.tabs(["📝 Новые отзывы", "📜 История"])
     
     with tab1:
-        if st.button("🔄 Обновить список отзывов"):
+        if st.button("🔄 Обновить список"):
             st.session_state['reviews'] = get_wb_reviews(wb_token)
             
         reviews = st.session_state['reviews']
         
         if not reviews:
-            st.info("Нажмите кнопку обновления выше.")
+            st.info("Нажмите кнопку обновления.")
         else:
             for review in reviews:
                 rid = review['id']
@@ -179,7 +182,7 @@ else:
                 with st.expander(f"{'⭐'*rating} {prod}", expanded=True):
                     st.write(f"**Клиент:** {txt}")
                     
-                    # Кнопка генерации
+                    # Кнопка
                     if st.button("✨ Генерировать", key=f"g_{rid}"):
                         val = generate_gemini(gemini_key, txt, rating, prod, brand_sign)
                         st.session_state['generated_answers'][rid] = val
