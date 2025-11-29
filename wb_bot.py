@@ -9,18 +9,11 @@ from openai import OpenAI
 # ==========================================
 st.set_page_config(page_title="WB AI Master", layout="wide", page_icon="🛍️")
 
-# CSS для красоты (убираем лишние отступы, настраиваем шрифты)
 st.markdown("""
     <style>
     .block-container {padding-top: 2rem; padding-bottom: 5rem;}
     .stTextArea textarea {font-size: 16px !important; line-height: 1.5;}
     div[data-testid="stExpander"] div[role="button"] p {font-size: 16px; font-weight: 600;}
-    .status-badge {
-        padding: 5px 10px;
-        border-radius: 5px;
-        font-size: 12px;
-        font-weight: bold;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -29,10 +22,8 @@ st.markdown("""
 # ==========================================
 
 def format_date(iso_date):
-    """Превращает страшную дату WB в нормальный вид"""
     if not iso_date: return ""
     try:
-        # Обычно дата приходит как 2025-11-29T10:00:00Z
         dt = datetime.datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
         return dt.strftime("%d.%m.%Y %H:%M")
     except:
@@ -43,19 +34,17 @@ def format_date(iso_date):
 # ==========================================
 
 def get_wb_data(wb_token, mode="feedbacks", is_answered=False):
-    """Получает список отзывов или вопросов"""
     if len(wb_token) < 10: return []
     
     headers = {"Authorization": wb_token}
     params = {
         "isAnswered": str(is_answered).lower(),
-        "take": 30,  # Сколько грузить за раз
+        "take": 30,
         "skip": 0,
         "order": "dateDesc"
     }
     
     try:
-        # WB объединил API, но endpoints разные
         if mode == "feedbacks":
             url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks"
             key = 'feedbacks'
@@ -71,7 +60,6 @@ def get_wb_data(wb_token, mode="feedbacks", is_answered=False):
                 return data['data'][key]
             return []
         
-        # Если ошибка авторизации
         if res.status_code == 401:
             st.error("Ошибка 401: Неверный токен WB (или истек).")
         return []
@@ -81,7 +69,6 @@ def get_wb_data(wb_token, mode="feedbacks", is_answered=False):
         return []
 
 def send_wb(review_id, text, wb_token, mode="feedbacks"):
-    """Отправляет ответ на WB"""
     headers = {"Authorization": wb_token}
     
     if not text or len(text) < 2:
@@ -110,7 +97,6 @@ def send_wb(review_id, text, wb_token, mode="feedbacks"):
 # ==========================================
 
 def generate_ai(api_key, text, item_name, user_name, instructions, signature):
-    """Генерирует ответ через Groq (Llama 3)"""
     if not api_key: return "Ошибка: Нет ключа Groq"
     
     client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
@@ -140,8 +126,8 @@ def generate_ai(api_key, text, item_name, user_name, instructions, signature):
     
     try:
         response = client.chat.completions.create(
-            # ИСПОЛЬЗУЕМ САМУЮ БЫСТРУЮ МОДЕЛЬ, ЧТОБЫ НЕ ЗАВИСАЛО
-            model="llama3-8b-8192", 
+            # !!! ВОТ ТУТ МЫ ПОСТАВИЛИ САМУЮ НОВУЮ МОДЕЛЬ !!!
+            model="llama-3.1-8b-instant", 
             messages=[{"role": "user", "content": prompt}],
             temperature=0.6,
             max_tokens=600,
@@ -155,24 +141,22 @@ def generate_ai(api_key, text, item_name, user_name, instructions, signature):
 # 5. ИНТЕРФЕЙС И НАСТРОЙКИ
 # ==========================================
 
-# Инициализация переменных сессии
 if 'history' not in st.session_state: st.session_state['history'] = []
 if 'feedbacks' not in st.session_state: st.session_state['feedbacks'] = []
 if 'questions' not in st.session_state: st.session_state['questions'] = []
 
-# Загрузка ключей из Secrets (если есть)
+# Загрузка ключей
 default_wb = ""
 default_groq = ""
 if hasattr(st, 'secrets'):
     default_wb = st.secrets.get('WB_API_TOKEN', "")
     default_groq = st.secrets.get('GROQ_API_KEY', "")
 
-# --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
     st.title("⚙️ Настройки")
     
-    wb_token = st.text_input("WB API Token", value=default_wb, type="password", help="Тип 'Стандартный' или 'Вопросы/Отзывы'")
-    groq_key = st.text_input("Groq API Key", value=default_groq, type="password", help="Начинается на gsk_")
+    wb_token = st.text_input("WB API Token", value=default_wb, type="password")
+    groq_key = st.text_input("Groq API Key", value=default_groq, type="password")
     
     st.divider()
     
@@ -189,7 +173,6 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-# Проверка ключей
 if not wb_token or not groq_key:
     st.warning("👈 Пожалуйста, введите ключи в меню слева для начала работы.")
     st.stop()
@@ -216,13 +199,11 @@ with tab1:
         st.write(f"Очередь: {len(reviews)} шт.")
         for rev in reviews:
             with st.container(border=True):
-                # Шапка карточки
                 c1, c2 = st.columns([3, 1])
                 c1.markdown(f"**{rev['productDetails']['productName']}**")
                 c1.write(f"{'⭐'*rev['productValuation']}")
                 c2.caption(format_date(rev['createdDate']))
                 
-                # Тело карточки
                 col_img, col_content = st.columns([1, 5])
                 
                 with col_img:
@@ -236,30 +217,26 @@ with tab1:
                     st.write(f"👤 **{user_name}:**")
                     st.info(rev.get('text') if rev.get('text') else "*(Без текста)*")
                     
-                    # Генерация
                     gen_key = f"ans_{rev['id']}"
                     
                     if st.button(f"✨ Сгенерировать ответ", key=f"btn_{rev['id']}"):
-                        with st.spinner("Llama 3 думает..."):
+                        with st.spinner("Думаю..."):
                             ans = generate_ai(groq_key, rev.get('text', ''), rev['productDetails']['productName'], user_name, custom_prompt, signature)
                             
                             if "ОШИБКА" in ans:
                                 st.error(ans)
                             else:
                                 st.session_state[gen_key] = ans
-                                st.rerun() # Мгновенное обновление
+                                st.rerun()
                     
-                    # Поле ответа
                     val = st.session_state.get(gen_key, "")
                     final_txt = st.text_area("Текст ответа:", value=val, height=150, key=f"area_{rev['id']}")
                     
-                    # Кнопка отправки
                     if st.button("🚀 Отправить на WB", key=f"snd_{rev['id']}"):
                         res = send_wb(rev['id'], final_txt, wb_token, "feedbacks")
                         if res == "OK":
                             st.success("Ответ опубликован!")
                             time.sleep(1)
-                            # Удаляем из списка на экране
                             st.session_state['feedbacks'] = [r for r in st.session_state['feedbacks'] if r['id'] != rev['id']]
                             st.rerun()
                         else:
@@ -283,14 +260,12 @@ with tab2:
             with st.container(border=True):
                 st.markdown(f"❓ **{q['productDetails']['productName']}**")
                 st.caption(format_date(q['createdDate']))
-                
                 st.write(f"**Вопрос:** {q.get('text', '')}")
                 
                 q_key = f"q_ans_{q['id']}"
                 
                 if st.button("✨ Придумать ответ", key=f"btn_q_{q['id']}"):
                     with st.spinner("Генерирую..."):
-                        # Модифицируем промпт для вопроса
                         q_prompt = custom_prompt + " Это ВОПРОС ПОКУПАТЕЛЯ О ТОВАРЕ. Дай конкретный и полезный ответ."
                         ans = generate_ai(groq_key, q.get('text', ''), q['productDetails']['productName'], "Покупатель", q_prompt, signature)
                         
@@ -320,7 +295,6 @@ with tab3:
     col_h1, col_h2 = st.columns([1, 4])
     if col_h1.button("📥 Скачать историю с WB"):
         with st.spinner("Загружаю архив отвеченных..."):
-            # Запрашиваем isAnswered=True
             st.session_state['history'] = get_wb_data(wb_token, "feedbacks", True)
     
     history = st.session_state.get('history', [])
@@ -331,13 +305,11 @@ with tab3:
         for item in history:
             with st.container(border=True):
                 col1, col2 = st.columns([1, 6])
-                
                 with col1:
                     if item.get('photoLinks'):
                         st.image(item['photoLinks'][0]['smallSize'], use_container_width=True)
                     else:
                         st.write("📦")
-                
                 with col2:
                     st.caption(format_date(item['createdDate']))
                     st.markdown(f"**{item['productDetails']['productName']}** {'⭐'*item['productValuation']}")
@@ -347,16 +319,15 @@ with tab3:
                     
                     st.divider()
                     
-                    # Безопасный вывод ответа
                     ans_data = item.get('answer')
                     if ans_data and 'text' in ans_data:
                         st.markdown(f"✅ **Ответ:**")
-                        st.caption(ans_data['text']) # Используем caption для серого цвета
+                        st.caption(ans_data['text'])
                     else:
                         st.warning("⚠️ Ответ есть в системе, но текст не загрузился.")
 
 # ==========================================
-# АВТОМАТИЧЕСКИЙ РЕЖИМ (В КОНЦЕ)
+# АВТОМАТИЧЕСКИЙ РЕЖИМ
 # ==========================================
 if auto_mode:
     st.markdown("---")
@@ -365,7 +336,7 @@ if auto_mode:
     status_log = st.empty()
     progress = st.progress(0)
     
-    # 1. Обработка отзывов
+    # 1. Отзывы
     revs = get_wb_data(wb_token, "feedbacks", False)
     total = len(revs)
     
@@ -375,11 +346,9 @@ if auto_mode:
         
         status_log.write(f"🔄 [Отзыв {i+1}/{total}] {prod}...")
         
-        # Генерация
         ans = generate_ai(groq_key, r.get('text',''), prod, user, custom_prompt, signature)
         
         if ans and "ОШИБКА" not in ans:
-            # Отправка
             res = send_wb(r['id'], ans, wb_token, "feedbacks")
             if res == "OK":
                 st.toast(f"✅ Отзыв {i+1} закрыт!")
@@ -387,9 +356,9 @@ if auto_mode:
                 st.error(f"Сбой отправки: {res}")
         
         progress.progress((i + 1) / (total + 1) if total > 0 else 100)
-        time.sleep(3) # Пауза между запросами
+        time.sleep(3)
         
-    # 2. Обработка вопросов
+    # 2. Вопросы
     qs = get_wb_data(wb_token, "questions", False)
     total_q = len(qs)
     
