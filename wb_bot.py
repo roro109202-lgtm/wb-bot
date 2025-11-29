@@ -45,7 +45,7 @@ def generate_ai_response(api_key, review_text, rating, product_name, brand_signa
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         
         if rating >= 4:
             sentiment = "позитивный"
