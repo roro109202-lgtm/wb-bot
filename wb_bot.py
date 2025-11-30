@@ -5,18 +5,19 @@ import datetime
 from openai import OpenAI
 
 # ==========================================
-# 1. НАСТРОЙКИ
+# 1. НАСТРОЙКИ (ПОЛНАЯ ТЕМНАЯ ТЕМА)
 # ==========================================
-st.set_page_config(page_title="WB AI Master v32", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="WB AI Master v28", layout="wide", page_icon="🛍️")
 
+# Убираем все белые фоны, оставляем только нативные стили
 st.markdown("""
     <style>
     .block-container {padding-top: 1.5rem;}
     .stTextArea textarea {font-size: 16px !important;}
     
-    .wb-pros {color: #4CAF50; font-weight: 500; margin-bottom: 2px;}
-    .wb-cons {color: #FF5252; font-weight: 500; margin-bottom: 2px;}
-    .wb-comment {margin-top: 8px; font-size: 16px;}
+    /* Цвета для текста в темной теме */
+    .pros-text {color: #66BB6A; font-weight: bold;}
+    .cons-text {color: #EF5350; font-weight: bold;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -32,6 +33,7 @@ def format_date(iso_date):
     except:
         return str(iso_date)
 
+# ГЕНЕРАТОР ФОТО ТОВАРА (ОБНОВЛЕННЫЙ)
 def get_main_photo_url(nm_id):
     try:
         vol = int(nm_id) // 100000
@@ -51,14 +53,15 @@ def get_main_photo_url(nm_id):
         elif 1656 <= vol <= 1919: basket = "12"
         elif 1920 <= vol <= 2045: basket = "13"
         elif 2046 <= vol <= 2189: basket = "14"
-        elif 2190 <= vol <= 2405: basket = "15"
+        elif 2190 <= vol <= 2405: basket = "15" # Новые сервера
         else: basket = "16"
+        
         return f"https://basket-{basket}.wbbasket.ru/vol{vol}/part{part}/{nm_id}/images/c246x328/1.webp"
     except:
         return None
 
 def get_wb_data(wb_token, mode="feedbacks", is_answered=False):
-    if not wb_token or len(wb_token) < 10: return []
+    if not wb_token: return []
     headers = {"Authorization": wb_token}
     params = {"isAnswered": str(is_answered).lower(), "take": 50, "skip": 0, "order": "dateDesc"}
     try:
@@ -103,11 +106,12 @@ def generate_ai(api_key, text, item_name, user_name, instructions, signature):
     Клиент пишет: "{user_msg}"
     Инструкция: {instructions}
     
-    ПРАВИЛА:
-    1. НЕ используй нумерацию.
-    2. Начни с: "{greeting}"
-    3. Разделяй абзацы пустой строкой.
-    4. В конце: "{signature}"
+    Формат ответа:
+    1. {greeting}
+    2. (Пустая строка)
+    3. Ответ.
+    4. (Пустая строка)
+    5. {signature}
     """
     try:
         response = client.chat.completions.create(
@@ -136,7 +140,7 @@ if 'questions' not in st.session_state: st.session_state['questions'] = []
 if 'action_log' not in st.session_state: st.session_state['action_log'] = []
 if 'history' not in st.session_state: st.session_state['history'] = []
 
-# Загрузка магазинов
+# --- ЗАГРУЗКА МАГАЗИНОВ ---
 if 'shops' not in st.session_state:
     st.session_state['shops'] = {}
     if hasattr(st, 'secrets') and 'shops' in st.secrets:
@@ -159,15 +163,15 @@ with st.sidebar:
     shop_list = list(st.session_state['shops'].keys())
     if not shop_list:
         st.warning("Нет магазинов")
-        selected_shop = ""
         current_wb_token = ""
+        selected_shop = ""
         new_sh_name = st.text_input("Имя")
         new_sh_token = st.text_input("Токен", type="password")
         if st.button("Сохранить"):
             st.session_state['shops'][new_sh_name] = new_sh_token
             st.rerun()
     else:
-        selected_shop = st.selectbox("Магазин:", shop_list, key='shop_select')
+        selected_shop = st.selectbox("Магазин:", shop_list)
         current_wb_token = st.session_state['shops'][selected_shop]
         
         with st.expander("Добавить еще"):
@@ -207,7 +211,7 @@ if not current_wb_token or not groq_key:
 # 5. ГЛАВНЫЙ ЭКРАН
 # ==========================================
 
-st.title(f"🛍️ {st.session_state.shop_select}")
+st.title(f"🛍️ {selected_shop}")
 
 if st.button("🔄 Сканировать магазин", type="primary", use_container_width=True):
     with st.spinner("Загрузка..."):
@@ -228,7 +232,7 @@ tab_rev, tab_quest, tab_log, tab_arch = st.tabs([
     f"⭐ Отзывы ({count_rev})", 
     f"❓ Вопросы ({count_quest})", 
     "📜 Журнал",
-    "✅ Есть ответ"
+    "🗄️ Архив"
 ])
 
 # --- ОТЗЫВЫ ---
@@ -239,12 +243,14 @@ with tab_rev:
     else:
         for rev in reviews:
             try:
+                # Данные
                 prod_name = rev.get('productDetails', {}).get('productName', 'Товар')
                 nm_id = rev.get('productDetails', {}).get('nmId', 0)
                 brand = rev.get('productDetails', {}).get('brandName', '')
                 rating = rev.get('productValuation', 5)
                 user = rev.get('userName', 'Покупатель')
                 
+                # Текст
                 pros = rev.get('pros', '')
                 cons = rev.get('cons', '')
                 comment = rev.get('text', '')
@@ -254,23 +260,34 @@ with tab_rev:
                 with st.container(border=True):
                     cols = st.columns([1, 4])
                     
+                    # 1. ГЛАВНОЕ ФОТО ТОВАРА (ЛЕВАЯ КОЛОНКА)
                     with cols[0]:
                         main_photo = get_main_photo_url(nm_id)
-                        # ИСПРАВЛЕНО: Убрал use_container_width, который мусорил в логах
-                        if main_photo: st.image(main_photo, width=150)
-                        else: st.write("📦")
+                        if main_photo: 
+                            st.image(main_photo, use_container_width=True)
+                        else: 
+                            st.write("📦")
                     
+                    # 2. КОНТЕНТ (ПРАВАЯ КОЛОНКА)
                     with cols[1]:
                         st.markdown(f"**{prod_name}**")
                         st.caption(f"Арт: {nm_id} | {brand}")
                         st.write(f"{'⭐'*rating} | **{user}** | {format_date(rev.get('createdDate'))}")
+                        
                         st.markdown("---")
                         
-                        if pros: st.markdown(f":green[**Достоинства:**] {pros}")
-                        if cons: st.markdown(f":red[**Недостатки:**] {cons}")
-                        if comment: st.markdown(f"**Комментарий:** {comment}")
-                        if not (pros or cons or comment): st.caption("*(Оценка без текста)*")
+                        # Вывод текста (Нативный, с цветными метками)
+                        if pros: 
+                            st.markdown(f":green[**Достоинства:**] {pros}")
+                        if cons: 
+                            st.markdown(f":red[**Недостатки:**] {cons}")
+                        if comment: 
+                            st.markdown(f"**Комментарий:** {comment}")
+                        
+                        if not (pros or cons or comment):
+                            st.caption("*(Оценка без текста)*")
                             
+                        # ФОТО ПОКУПАТЕЛЯ (ЕСЛИ ЕСТЬ)
                         if rev.get('photoLinks'):
                             st.write("**Фото от клиента:**")
                             p_cols = st.columns(6)
@@ -281,12 +298,12 @@ with tab_rev:
                         st.markdown("---")
                         
                         key = f"r_{rev['id']}"
+                        
                         if st.button("✨ Сгенерировать ответ", key=f"btn_{key}"):
-                            # ИСПРАВЛЕНО: Добавлен спиннер и rerun
-                            with st.spinner("Генерирую..."):
-                                ans = generate_ai(groq_key, full_text_ai, prod_name, user, prompt_rev, signature)
-                                st.session_state[key] = ans
-                                st.rerun()
+                            # Если текста нет, передаем пустую строку, ИИ сам поймет
+                            ans = generate_ai(groq_key, full_text_ai, prod_name, user, prompt_rev, signature)
+                            st.session_state[key] = ans
+                            st.rerun()
                         
                         response_text = st.text_area("Ваш ответ:", value=st.session_state.get(key, ""), height=100, key=f"area_{key}")
                         
@@ -299,7 +316,9 @@ with tab_rev:
                                 st.rerun()
                             else:
                                 st.error(res)
-            except: pass
+            except Exception as e:
+                # st.error(f"Err: {e}") # Отладка отключена
+                pass
 
 # --- ВОПРОСЫ ---
 with tab_quest:
@@ -318,7 +337,7 @@ with tab_quest:
                     
                     with cols[0]:
                         main_photo = get_main_photo_url(nm_id)
-                        if main_photo: st.image(main_photo, width=150)
+                        if main_photo: st.image(main_photo, use_container_width=True)
                         else: st.write("❓")
                     
                     with cols[1]:
@@ -329,10 +348,9 @@ with tab_quest:
                         
                         qk = f"q_{q['id']}"
                         if st.button("✨ Ответ", key=f"qbtn_{qk}"):
-                            with st.spinner("Генерирую..."):
-                                ans = generate_ai(groq_key, text, prod_name, "Покупатель", prompt_quest, signature)
-                                st.session_state[qk] = ans
-                                st.rerun()
+                            ans = generate_ai(groq_key, text, prod_name, "Покупатель", prompt_quest, signature)
+                            st.session_state[qk] = ans
+                            st.rerun()
                             
                         q_resp = st.text_area("Ваш ответ:", value=st.session_state.get(qk, ""), height=100, key=f"qarea_{qk}")
                         
@@ -354,10 +372,8 @@ with tab_log:
 
 # --- АРХИВ ---
 with tab_arch:
-    if st.button("📥 Загрузить отвеченные"):
-        with st.spinner("Загрузка из WB..."):
-            st.session_state['history'] = get_wb_data(current_wb_token, "feedbacks", True)
-            
+    if st.button("📥 История"):
+        st.session_state['history'] = get_wb_data(current_wb_token, "feedbacks", True)
     for item in st.session_state.get('history', []):
         try:
             name = item.get('productDetails', {}).get('productName', 'Товар')
