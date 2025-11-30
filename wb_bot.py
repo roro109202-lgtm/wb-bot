@@ -5,9 +5,9 @@ import datetime
 from openai import OpenAI
 
 # ==========================================
-# 1. НАСТРОЙКИ (DARK MODE NATIVE)
+# 1. НАСТРОЙКИ
 # ==========================================
-st.set_page_config(page_title="WB AI Master v35", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="WB AI Master v32", layout="wide", page_icon="🛍️")
 
 st.markdown("""
     <style>
@@ -17,15 +17,6 @@ st.markdown("""
     .wb-pros {color: #4CAF50; font-weight: 500; margin-bottom: 2px;}
     .wb-cons {color: #FF5252; font-weight: 500; margin-bottom: 2px;}
     .wb-comment {margin-top: 8px; font-size: 16px;}
-    
-    /* Выделяем активный пункт меню */
-    section[data-testid="stSidebar"] .stRadio label {
-        font-weight: bold;
-        padding: 10px;
-        background: rgba(255,255,255,0.05);
-        border-radius: 5px;
-        margin-bottom: 2px;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -67,7 +58,7 @@ def get_main_photo_url(nm_id):
         return None
 
 def get_wb_data(wb_token, mode="feedbacks", is_answered=False):
-    if not wb_token: return []
+    if not wb_token or len(wb_token) < 10: return []
     headers = {"Authorization": wb_token}
     params = {"isAnswered": str(is_answered).lower(), "take": 50, "skip": 0, "order": "dateDesc"}
     try:
@@ -112,12 +103,11 @@ def generate_ai(api_key, text, item_name, user_name, instructions, signature):
     Клиент пишет: "{user_msg}"
     Инструкция: {instructions}
     
-    Формат ответа:
-    1. {greeting}
-    2. (Пустая строка)
-    3. Ответ.
-    4. (Пустая строка)
-    5. {signature}
+    ПРАВИЛА:
+    1. НЕ используй нумерацию.
+    2. Начни с: "{greeting}"
+    3. Разделяй абзацы пустой строкой.
+    4. В конце: "{signature}"
     """
     try:
         response = client.chat.completions.create(
@@ -160,22 +150,17 @@ if hasattr(st, 'secrets'):
     default_groq = st.secrets.get('GROQ_API_KEY', "")
 
 # ==========================================
-# 4. САЙДБАР (ГЛАВНОЕ МЕНЮ)
+# 4. САЙДБАР
 # ==========================================
 
 with st.sidebar:
     st.title("🎛️ Меню")
     
-    # --- НАВИГАЦИЯ (ЭТО РЕШАЕТ ПРОБЛЕМУ ВЫЛЕТА) ---
-    nav_page = st.radio("Раздел:", ["⭐ Отзывы", "❓ Вопросы", "📜 Журнал", "🗄️ Архив"])
-    
-    st.divider()
-    
     shop_list = list(st.session_state['shops'].keys())
     if not shop_list:
         st.warning("Нет магазинов")
-        current_wb_token = ""
         selected_shop = ""
+        current_wb_token = ""
         new_sh_name = st.text_input("Имя")
         new_sh_token = st.text_input("Токен", type="password")
         if st.button("Сохранить"):
@@ -224,14 +209,12 @@ if not current_wb_token or not groq_key:
 
 st.title(f"🛍️ {st.session_state.shop_select}")
 
-# Кнопка обновления ВСЕГДА доступна
 if st.button("🔄 Сканировать магазин", type="primary", use_container_width=True):
     with st.spinner("Загрузка..."):
         st.session_state['feedbacks'] = get_wb_data(current_wb_token, "feedbacks")
         st.session_state['questions'] = get_wb_data(current_wb_token, "questions")
         log_event(f"Обновление: {selected_shop}")
 
-# Метрики
 c1, c2, c3 = st.columns(3)
 count_rev = len(st.session_state.get('feedbacks', []))
 count_quest = len(st.session_state.get('questions', []))
@@ -241,14 +224,18 @@ c3.metric("Логи", len(st.session_state['action_log']))
 
 st.write("")
 
-# === ЛОГИКА ОТОБРАЖЕНИЯ (ЗАВИСИТ ОТ МЕНЮ СЛЕВА) ===
+tab_rev, tab_quest, tab_log, tab_arch = st.tabs([
+    f"⭐ Отзывы ({count_rev})", 
+    f"❓ Вопросы ({count_quest})", 
+    "📜 Журнал",
+    "✅ Есть ответ"
+])
 
-# --- 1. РАЗДЕЛ ОТЗЫВЫ ---
-if nav_page == "⭐ Отзывы":
-    st.subheader("Неотвеченные отзывы")
+# --- ОТЗЫВЫ ---
+with tab_rev:
     reviews = st.session_state.get('feedbacks', [])
     if not reviews:
-        st.info("Всё чисто! Нет новых отзывов.")
+        st.info("Нет отзывов.")
     else:
         for rev in reviews:
             try:
@@ -266,10 +253,13 @@ if nav_page == "⭐ Отзывы":
                 
                 with st.container(border=True):
                     cols = st.columns([1, 4])
+                    
                     with cols[0]:
                         main_photo = get_main_photo_url(nm_id)
-                        if main_photo: st.image(main_photo, use_container_width=True)
+                        # ИСПРАВЛЕНО: Убрал use_container_width, который мусорил в логах
+                        if main_photo: st.image(main_photo, width=150)
                         else: st.write("📦")
+                    
                     with cols[1]:
                         st.markdown(f"**{prod_name}**")
                         st.caption(f"Арт: {nm_id} | {brand}")
@@ -292,9 +282,11 @@ if nav_page == "⭐ Отзывы":
                         
                         key = f"r_{rev['id']}"
                         if st.button("✨ Сгенерировать ответ", key=f"btn_{key}"):
-                            ans = generate_ai(groq_key, full_text_ai, prod_name, user, prompt_rev, signature)
-                            st.session_state[key] = ans
-                            st.rerun()
+                            # ИСПРАВЛЕНО: Добавлен спиннер и rerun
+                            with st.spinner("Генерирую..."):
+                                ans = generate_ai(groq_key, full_text_ai, prod_name, user, prompt_rev, signature)
+                                st.session_state[key] = ans
+                                st.rerun()
                         
                         response_text = st.text_area("Ваш ответ:", value=st.session_state.get(key, ""), height=100, key=f"area_{key}")
                         
@@ -309,9 +301,8 @@ if nav_page == "⭐ Отзывы":
                                 st.error(res)
             except: pass
 
-# --- 2. РАЗДЕЛ ВОПРОСЫ ---
-elif nav_page == "❓ Вопросы":
-    st.subheader("Неотвеченные вопросы")
+# --- ВОПРОСЫ ---
+with tab_quest:
     quests = st.session_state.get('questions', [])
     if not quests:
         st.info("Нет вопросов.")
@@ -324,9 +315,10 @@ elif nav_page == "❓ Вопросы":
                 
                 with st.container(border=True):
                     cols = st.columns([1, 4])
+                    
                     with cols[0]:
                         main_photo = get_main_photo_url(nm_id)
-                        if main_photo: st.image(main_photo, use_container_width=True)
+                        if main_photo: st.image(main_photo, width=150)
                         else: st.write("❓")
                     
                     with cols[1]:
@@ -336,10 +328,11 @@ elif nav_page == "❓ Вопросы":
                         st.caption(format_date(q.get('createdDate')))
                         
                         qk = f"q_{q['id']}"
-                        if st.button("✨ Сгенерировать ответ", key=f"qbtn_{qk}"):
-                            ans = generate_ai(groq_key, text, prod_name, "Покупатель", prompt_quest, signature)
-                            st.session_state[qk] = ans
-                            st.rerun()
+                        if st.button("✨ Ответ", key=f"qbtn_{qk}"):
+                            with st.spinner("Генерирую..."):
+                                ans = generate_ai(groq_key, text, prod_name, "Покупатель", prompt_quest, signature)
+                                st.session_state[qk] = ans
+                                st.rerun()
                             
                         q_resp = st.text_area("Ваш ответ:", value=st.session_state.get(qk, ""), height=100, key=f"qarea_{qk}")
                         
@@ -354,22 +347,16 @@ elif nav_page == "❓ Вопросы":
                                 st.error(res)
             except: pass
 
-# --- 3. РАЗДЕЛ ЖУРНАЛ ---
-elif nav_page == "📜 Журнал":
-    st.subheader("Логи действий (Авто-режим)")
+# --- ЛОГИ ---
+with tab_log:
     for log in st.session_state['action_log']:
         st.write(log)
 
-# --- 4. РАЗДЕЛ АРХИВ ---
-elif nav_page == "🗄️ Архив":
-    st.subheader("История ответов")
-    if st.button("📥 Загрузить историю (с WB)"):
-        with st.spinner("Загрузка..."):
-            rv = get_wb_data(current_wb_token, "feedbacks", True)
-            qs = get_wb_data(current_wb_token, "questions", True)
-            st.session_state['history'] = (rv if rv else []) + (qs if qs else [])
-            try: st.session_state['history'].sort(key=lambda x: x.get('createdDate', ''), reverse=True)
-            except: pass
+# --- АРХИВ ---
+with tab_arch:
+    if st.button("📥 Загрузить отвеченные"):
+        with st.spinner("Загрузка из WB..."):
+            st.session_state['history'] = get_wb_data(current_wb_token, "feedbacks", True)
             
     for item in st.session_state.get('history', []):
         try:
@@ -380,13 +367,11 @@ elif nav_page == "🗄️ Архив":
                 if item.get('answer'): st.info(item['answer']['text'])
         except: pass
 
-# === АВТО-РЕЖИМ (ФОН) ===
-if (auto_reviews or auto_questions) and st.session_state['shops']:
+# --- АВТО-РЕЖИМ ---
+if (auto_reviews or auto_questions) and (st.session_state.get('feedbacks') or st.session_state.get('questions')):
     st.toast(f"⚡ Авто-режим: {selected_shop}")
     
-    # 1. Отзывы
     if auto_reviews:
-        # Пробегаем по копии списка
         for r in list(st.session_state['feedbacks']):
             prod = r.get('productDetails', {}).get('productName', '')
             pros = r.get('pros', '')
@@ -400,11 +385,9 @@ if (auto_reviews or auto_questions) and st.session_state['shops']:
                 if send_wb(r['id'], ans, current_wb_token, "feedbacks") == "OK":
                     st.session_state['feedbacks'].remove(r)
                     st.toast(f"Ответ: {prod}")
-                    log_event(f"Авто-отзыв: {prod}", "success")
                     time.sleep(2)
                     st.rerun()
 
-    # 2. Вопросы
     if auto_questions:
         for q in list(st.session_state['questions']):
             prod = q.get('productDetails', {}).get('productName', '')
@@ -413,6 +396,5 @@ if (auto_reviews or auto_questions) and st.session_state['shops']:
                 if send_wb(q['id'], ans, current_wb_token, "questions") == "OK":
                     st.session_state['questions'].remove(q)
                     st.toast(f"Ответ: {prod}")
-                    log_event(f"Авто-вопрос: {prod}", "success")
                     time.sleep(2)
                     st.rerun()
