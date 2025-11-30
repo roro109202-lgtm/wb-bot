@@ -5,31 +5,21 @@ import datetime
 from openai import OpenAI
 
 # ==========================================
-# 1. НАСТРОЙКИ СТРАНИЦЫ
+# 1. НАСТРОЙКИ
 # ==========================================
-st.set_page_config(page_title="WB AI Master v17", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="WB AI Master v18", layout="wide", page_icon="🛡️")
 
 st.markdown("""
     <style>
     .block-container {padding-top: 1rem;}
     .stTextArea textarea {font-size: 16px !important;}
     div[data-testid="stExpander"] div[role="button"] p {font-size: 16px; font-weight: 600;}
-    
-    /* Стили для чата */
-    .chat-card {
-        border: 1px solid #ddd;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 10px;
-        background-color: #f9f9f9;
-    }
-    .chat-user {font-weight: bold; color: #2c3e50;}
-    .chat-msg {background-color: #fff; padding: 10px; border-radius: 5px; border: 1px solid #eee; margin-top: 5px;}
+    .chat-card {border: 1px solid #ddd; padding: 10px; border-radius: 8px; margin-bottom: 10px; background: #f8f9fa;}
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. ФУНКЦИИ WB (CORE)
+# 2. ФУНКЦИИ WB (БЕЗОПАСНЫЕ)
 # ==========================================
 
 def format_date(iso_date):
@@ -40,43 +30,70 @@ def format_date(iso_date):
     except:
         return iso_date
 
-def get_wb_data(wb_token, mode="feedbacks"):
-    """Получение данных (Отзывы, Вопросы, Чаты)"""
+def get_wb_data(wb_token, mode="feedbacks", is_answered=False):
+    """
+    Универсальная и БЕЗОПАСНАЯ функция получения данных.
+    Не падает, если WB присылает ерунду.
+    """
     if len(wb_token) < 10: return []
     headers = {"Authorization": wb_token}
     
     try:
-        # 1. ОТЗЫВЫ
-        if mode == "feedbacks":
-            url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks"
-            params = {"isAnswered": "false", "take": 30, "skip": 0, "order": "dateDesc"}
-            res = requests.get(url, headers=headers, params=params, timeout=10)
-            if res.status_code == 200: return res.json()['data']['feedbacks']
-
-        # 2. ВОПРОСЫ
-        elif mode == "questions":
-            url = "https://feedbacks-api.wildberries.ru/api/v1/questions"
-            params = {"isAnswered": "false", "take": 30, "skip": 0, "order": "dateDesc"}
-            res = requests.get(url, headers=headers, params=params, timeout=10)
-            if res.status_code == 200: return res.json()['data']['questions']
-
-        # 3. ЧАТЫ (Новый функционал)
-        elif mode == "chats":
+        # --- 1. ЧАТЫ (Самые капризные) ---
+        if mode == "chats":
             url = "https://buyer-chat-api.wildberries.ru/api/v1/seller/chats"
             params = {"limit": 20, "sort": "desc"}
             res = requests.get(url, headers=headers, params=params, timeout=10)
+            
             if res.status_code == 200:
-                return res.json()['data']['chats']
+                json_data = res.json()
+                # Проверка: есть ли ключ 'data' и не пустой ли он
+                if 'data' in json_data and json_data['data'] is not None:
+                    if 'chats' in json_data['data']:
+                        return json_data['data']['chats']
+                return [] # Если структуры нет, возвращаем пустой список, а не ошибку
+            
             elif res.status_code == 401:
-                st.error("WB API: Нет доступа к чатам (проверьте галочки в токене)")
+                st.error("Чаты: Ошибка 401. Проверьте галочку 'Чат с покупателями' в токене!")
+                return []
+            else:
+                st.warning(f"Чаты не загрузились (код {res.status_code})")
+                return []
+
+        # --- 2. ОТЗЫВЫ И ВОПРОСЫ ---
+        else:
+            params = {
+                "isAnswered": str(is_answered).lower(),
+                "take": 30,
+                "skip": 0,
+                "order": "dateDesc"
+            }
+            
+            if mode == "feedbacks":
+                url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks"
+                key = 'feedbacks'
+            else: # questions
+                url = "https://feedbacks-api.wildberries.ru/api/v1/questions"
+                key = 'questions'
                 
-        return []
+            res = requests.get(url, headers=headers, params=params, timeout=15)
+            
+            if res.status_code == 200:
+                json_data = res.json()
+                # Безопасная проверка вложенности
+                if 'data' in json_data and json_data['data'] is not None:
+                    if key in json_data['data'] and json_data['data'][key] is not None:
+                        return json_data['data'][key]
+                return []
+            
+            return []
+
     except Exception as e:
-        st.error(f"Ошибка WB ({mode}): {e}")
+        # Пишем ошибку в консоль, но не ломаем приложение
+        print(f"Global Error in get_wb_data ({mode}): {e}")
         return []
 
 def send_wb(id_val, text, wb_token, mode="feedbacks"):
-    """Отправка ответа"""
     headers = {"Authorization": wb_token, "Content-Type": "application/json"}
     if not text or len(text) < 2: return "Текст пустой"
     
@@ -84,20 +101,19 @@ def send_wb(id_val, text, wb_token, mode="feedbacks"):
         if mode == "feedbacks":
             url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer"
             payload = {"id": id_val, "text": text}
-            res = requests.patch(url, headers=headers, json=payload, timeout=10)
+            res = requests.patch(url, headers=headers, json=payload, timeout=15)
 
         elif mode == "questions":
             url = "https://feedbacks-api.wildberries.ru/api/v1/questions/answer"
+            # ВАЖНО: Используем wbViewed, это работает
             payload = {"id": id_val, "answer": {"text": text}, "state": "wbViewed"}
-            res = requests.patch(url, headers=headers, json=payload, timeout=10)
+            res = requests.patch(url, headers=headers, json=payload, timeout=15)
 
         elif mode == "chats":
-            # API Чатов отличается - там POST запрос
             url = "https://buyer-chat-api.wildberries.ru/api/v1/seller/message"
             payload = {"chatId": id_val, "text": text}
-            res = requests.post(url, headers=headers, json=payload, timeout=10)
+            res = requests.post(url, headers=headers, json=payload, timeout=15)
 
-        # Обработка ответа
         if res.status_code in [200, 204]: return "OK"
         return f"Ошибка WB {res.status_code}: {res.text}"
             
@@ -118,17 +134,15 @@ def generate_ai(api_key, text, context, user_name, instructions, signature):
         greeting = f"Здравствуйте, {user_name}!"
         
     prompt = f"""
-    Роль: Служба заботы о клиентах Wildberries.
-    Контекст (Товар/Тема): {context}
-    Сообщение клиента: "{text}"
+    Роль: Поддержка Wildberries.
+    Контекст: {context}
+    Текст клиента: "{text}"
+    Инструкция: {instructions}
     
-    Твоя задача: Дать полезный, вежливый и человечный ответ на русском языке.
-    Инструкция владельца: "{instructions}"
-    
-    ФОРМАТ:
+    Формат ответа:
     1. {greeting}
     2. (Пустая строка)
-    3. Ответ по сути.
+    3. Ответ.
     4. (Пустая строка)
     5. {signature}
     """
@@ -139,7 +153,7 @@ def generate_ai(api_key, text, context, user_name, instructions, signature):
             messages=[{"role": "user", "content": prompt}],
             temperature=0.6,
             max_tokens=600,
-            timeout=15
+            timeout=20
         )
         res = response.choices[0].message.content
         if not res: return "ПУСТОЙ ОТВЕТ"
@@ -150,11 +164,6 @@ def generate_ai(api_key, text, context, user_name, instructions, signature):
 # ==========================================
 # 4. ИНТЕРФЕЙС
 # ==========================================
-
-# Инициализация
-if 'feedbacks' not in st.session_state: st.session_state['feedbacks'] = []
-if 'questions' not in st.session_state: st.session_state['questions'] = []
-if 'chats' not in st.session_state: st.session_state['chats'] = []
 
 # Ключи
 default_wb = ""
@@ -169,14 +178,12 @@ with st.sidebar:
     groq_key = st.text_input("Groq Key", value=default_groq, type="password")
     
     st.divider()
-    st.subheader("📝 Инструкции")
-    prompt_rev = st.text_area("Для Отзывов:", value="Благодари за покупку.", height=60)
-    prompt_chat = st.text_area("Для Чатов и Вопросов:", value="Отвечай коротко и по делу. Если проблема - проси фото или детали.", height=60)
+    prompt_rev = st.text_area("Промпт (Отзывы):", value="Благодари за покупку.", height=60)
+    prompt_chat = st.text_area("Промпт (Чаты/Вопросы):", value="Отвечай конкретно.", height=60)
     signature = st.text_input("Подпись:", value="С уважением, представитель бренда")
     
     st.divider()
-    auto_mode = st.toggle("⚡ АВТО-РЕЖИМ (ВСЁ)", value=False)
-    
+    auto_mode = st.toggle("⚡ АВТО-РЕЖИМ", value=False)
     st.markdown("---")
     if st.button("🗑️ Сброс кэша"):
         st.session_state.clear()
@@ -186,180 +193,169 @@ if not wb_token or not groq_key:
     st.warning("Введите ключи.")
     st.stop()
 
-st.title("🛍️ WB AI Master")
+st.title("🛍️ WB AI Master v18")
 
-# Обновляем счетчики для табов
-count_chats = len(st.session_state.get('chats', []))
-count_rev = len(st.session_state.get('feedbacks', []))
-count_quest = len(st.session_state.get('questions', []))
+# Инициализация состояний
+if 'chats' not in st.session_state: st.session_state['chats'] = []
+if 'feedbacks' not in st.session_state: st.session_state['feedbacks'] = []
+if 'questions' not in st.session_state: st.session_state['questions'] = []
+if 'history' not in st.session_state: st.session_state['history'] = []
 
-tab_chats, tab_rev, tab_quest, tab_hist = st.tabs([
-    f"💬 Чаты ({count_chats})", 
-    f"⭐ Отзывы ({count_rev})", 
-    f"❓ Вопросы ({count_quest})", 
+# Кнопка глобального обновления
+if st.button("🔄 Обновить ВСЕ данные", type="primary"):
+    with st.spinner("Загрузка данных с WB..."):
+        st.session_state['chats'] = get_wb_data(wb_token, "chats")
+        st.session_state['feedbacks'] = get_wb_data(wb_token, "feedbacks")
+        st.session_state['questions'] = get_wb_data(wb_token, "questions")
+        # Историю грузим отдельно по кнопке, чтобы не тормозить
+
+# Счетчики
+c_chat = len(st.session_state['chats'])
+c_rev = len(st.session_state['feedbacks'])
+c_quest = len(st.session_state['questions'])
+
+tab1, tab2, tab3, tab4 = st.tabs([
+    f"💬 Чаты ({c_chat})", 
+    f"⭐ Отзывы ({c_rev})", 
+    f"❓ Вопросы ({c_quest})", 
     "🗄️ Архив"
 ])
 
-# === ВКЛАДКА 1: ЧАТЫ ===
-with tab_chats:
-    if st.button("🔄 Обновить чаты", type="primary"):
-        with st.spinner("Проверяю сообщения..."):
-            st.session_state['chats'] = get_wb_data(wb_token, "chats")
-            st.rerun()
-            
-    chats = st.session_state.get('chats', [])
+# === ЧАТЫ ===
+with tab1:
+    chats = st.session_state['chats']
     if not chats:
-        st.info("Нет активных диалогов.")
+        st.info("Чатов нет или ошибка доступа (проверьте токен).")
     else:
         for chat in chats:
-            # Логика определения непрочитанных
-            client_name = chat.get('client', {}).get('name', 'Покупатель')
-            last_msg = chat.get('lastMessage', {})
-            msg_text = last_msg.get('text', '')
-            is_our_msg = last_msg.get('sender') == 'seller'
-            
-            # Если последнее сообщение наше - помечаем серым, если клиента - выделяем
-            bg_color = "#e3f2fd" if not is_our_msg else "#f0f2f6"
+            client = chat.get('client', {}).get('name', 'Покупатель')
+            msg = chat.get('lastMessage', {}).get('text', '')
+            is_me = chat.get('lastMessage', {}).get('sender') == 'seller'
             
             with st.container():
-                st.markdown(f"""
-                <div style="padding:10px; border-radius:10px; background-color:{bg_color}; border:1px solid #ddd; margin-bottom:10px;">
-                    <b>👤 {client_name}</b> <span style="color:#888; font-size:12px;">(ID: {chat['id'][:8]}...)</span><br>
-                    <div style="margin-top:5px; font-size:15px;">{msg_text}</div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Если последнее сообщение от клиента - даем ответить
-                if not is_our_msg:
-                    c1, c2 = st.columns([1, 1])
+                st.markdown(f"**{client}** (ID: {chat['id'][:6]}...)")
+                if is_me:
+                    st.caption(f"Вы: {msg}")
+                else:
+                    st.info(f"Клиент: {msg}")
                     
-                    key_gen = f"chat_gen_{chat['id']}"
+                    k = f"chat_{chat['id']}"
+                    if st.button("✨ Ответ", key=f"b_{k}"):
+                        ans = generate_ai(groq_key, msg, "Чат", client, prompt_chat, signature)
+                        st.session_state[k] = ans
+                        st.rerun()
+                        
+                    val = st.session_state.get(k, "")
+                    txt = st.text_area("Текст:", value=val, key=f"t_{k}", height=100)
                     
-                    if c1.button("✨ Придумать ответ", key=f"btn_c_{chat['id']}"):
-                        with st.spinner("Думаю..."):
-                            ans = generate_ai(groq_key, msg_text, "Чат поддержки", client_name, prompt_chat, signature)
-                            st.session_state[key_gen] = ans
-                            st.rerun()
-                            
-                    val = st.session_state.get(key_gen, "")
-                    final_txt = st.text_area("Ответ:", value=val, key=f"area_c_{chat['id']}", height=100)
-                    
-                    if c2.button("✉️ Отправить", key=f"snd_c_{chat['id']}"):
-                        res = send_wb(chat['id'], final_txt, wb_token, "chats")
+                    if st.button("Отправить", key=f"s_{k}"):
+                        res = send_wb(chat['id'], txt, wb_token, "chats")
                         if res == "OK":
-                            st.success("Сообщение отправлено!")
+                            st.success("Ушло!")
                             time.sleep(1)
                             st.rerun()
                         else:
                             st.error(res)
+            st.divider()
+
+# === ОТЗЫВЫ ===
+with tab2:
+    for rev in st.session_state['feedbacks']:
+        with st.container(border=True):
+            prod = rev.get('productDetails', {}).get('productName', 'Товар')
+            st.markdown(f"**{prod}** {'⭐'*rev['productValuation']}")
+            st.write(rev.get('text', ''))
+            
+            k = f"rev_{rev['id']}"
+            if st.button("✨ Сгенерировать", key=f"b_{k}"):
+                ans = generate_ai(groq_key, rev.get('text',''), prod, rev.get('userName',''), prompt_rev, signature)
+                st.session_state[k] = ans
+                st.rerun()
+            
+            txt = st.text_area("Ответ:", key=k) # Прямая привязка
+            if st.button("Отправить", key=f"s_{k}"):
+                if send_wb(rev['id'], txt, wb_token, "feedbacks") == "OK":
+                    st.success("Готово!")
+                    st.session_state['feedbacks'] = [x for x in st.session_state['feedbacks'] if x['id'] != rev['id']]
+                    st.rerun()
                 else:
-                    st.caption("✅ Вы уже ответили на это сообщение")
+                    st.error("Ошибка")
 
-# === ВКЛАДКА 2: ОТЗЫВЫ ===
-with tab_rev:
-    if st.button("🔄 Обновить отзывы"):
-        st.session_state['feedbacks'] = get_wb_data(wb_token, "feedbacks")
-        st.rerun()
-    
-    reviews = st.session_state.get('feedbacks', [])
-    if not reviews:
-        st.write("Пусто.")
-    else:
-        for rev in reviews:
-            with st.expander(f"{'⭐'*rev['productValuation']} {rev['productDetails']['productName']}", expanded=True):
-                st.write(rev.get('text', ''))
-                
-                k = f"r_{rev['id']}"
-                if st.button("✨ Авто-ответ", key=f"b_{k}"):
-                    ans = generate_ai(groq_key, rev.get('text',''), rev['productDetails']['productName'], rev.get('userName',''), prompt_rev, signature)
-                    st.session_state[k] = ans
+# === ВОПРОСЫ ===
+with tab3:
+    for q in st.session_state['questions']:
+        with st.container(border=True):
+            prod = q.get('productDetails', {}).get('productName', 'Товар')
+            st.markdown(f"❓ **{prod}**")
+            st.write(q.get('text', ''))
+            
+            k = f"qst_{q['id']}"
+            if st.button("✨ Сгенерировать", key=f"b_{k}"):
+                ans = generate_ai(groq_key, q.get('text',''), prod, "Покупатель", prompt_chat, signature)
+                st.session_state[k] = ans
+                st.rerun()
+            
+            txt = st.text_area("Ответ:", key=k)
+            if st.button("Отправить", key=f"s_{k}"):
+                if send_wb(q['id'], txt, wb_token, "questions") == "OK":
+                    st.success("Готово!")
+                    st.session_state['questions'] = [x for x in st.session_state['questions'] if x['id'] != q['id']]
                     st.rerun()
-                
-                txt = st.text_area("Текст:", value=st.session_state.get(k, ""), key=f"t_{k}")
-                if st.button("Отправить", key=f"s_{k}"):
-                    if send_wb(rev['id'], txt, wb_token, "feedbacks") == "OK":
-                        st.success("Ушло!")
-                        st.session_state['feedbacks'].remove(rev)
-                        time.sleep(1)
-                        st.rerun()
-
-# === ВКЛАДКА 3: ВОПРОСЫ ===
-with tab_quest:
-    if st.button("🔄 Обновить вопросы"):
-        st.session_state['questions'] = get_wb_data(wb_token, "questions")
-        st.rerun()
-        
-    quests = st.session_state.get('questions', [])
-    if not quests:
-        st.write("Пусто.")
-    else:
-        for q in quests:
-            with st.expander(f"❓ {q['productDetails']['productName']}", expanded=True):
-                st.write(q.get('text', ''))
-                
-                k = f"q_{q['id']}"
-                if st.button("✨ Авто-ответ", key=f"b_{k}"):
-                    ans = generate_ai(groq_key, q.get('text',''), q['productDetails']['productName'], "Покупатель", prompt_chat, signature)
-                    st.session_state[k] = ans
-                    st.rerun()
-                
-                txt = st.text_area("Текст:", value=st.session_state.get(k, ""), key=f"t_{k}")
-                if st.button("Отправить", key=f"s_{k}"):
-                    if send_wb(q['id'], txt, wb_token, "questions") == "OK":
-                        st.success("Ушло!")
-                        st.session_state['questions'].remove(q)
-                        time.sleep(1)
-                        st.rerun()
+                else:
+                    st.error("Ошибка")
 
 # === АРХИВ ===
-with tab_hist:
-    if st.button("📥 Загрузить историю (Отзывы)"):
-        st.session_state['history'] = get_wb_data(wb_token, "feedbacks")
-    
-    for item in st.session_state.get('history', []):
-        st.text(f"{item['createdDate']} - {item['text']}")
+with tab4:
+    if st.button("📥 Загрузить Архив (Отзывы)"):
+        with st.spinner("Грузим..."):
+            st.session_state['history'] = get_wb_data(wb_token, "feedbacks", True)
+            
+    if not st.session_state['history']:
+        st.write("Архив пуст или не загружен")
+    else:
+        for item in st.session_state['history']:
+            with st.container(border=True):
+                st.caption(format_date(item['createdDate']))
+                st.write(f"👤 {item.get('text', '')}")
+                if item.get('answer'):
+                    st.info(item['answer']['text'])
 
-# === АВТО-РЕЖИМ (ФОНОВЫЙ) ===
+# === АВТО-РЕЖИМ ===
 if auto_mode:
-    st.info("🤖 Бот работает... (Не закрывайте вкладку)")
-    progress_bar = st.progress(0)
+    st.info("Авто-режим включен...")
     
-    # 1. ЧАТЫ (Новое!)
+    # Чаты
     chats = get_wb_data(wb_token, "chats")
     for chat in chats:
-        last_msg = chat.get('lastMessage', {})
-        # Если последнее сообщение НЕ от нас -> надо отвечать
-        if last_msg.get('sender') != 'seller':
-            client_name = chat.get('client', {}).get('name', 'Покупатель')
-            text = last_msg.get('text', '')
-            st.toast(f"Чат: сообщение от {client_name}")
-            
-            # Генерируем
-            ans = generate_ai(groq_key, text, "Чат поддержки", client_name, prompt_chat, signature)
+        msg = chat.get('lastMessage', {})
+        if msg.get('sender') != 'seller': # Если последнее не от нас
+            txt = msg.get('text','')
+            ans = generate_ai(groq_key, txt, "Чат", "Покупатель", prompt_chat, signature)
             if "ОШИБКА" not in ans:
-                # Отправляем
                 send_wb(chat['id'], ans, wb_token, "chats")
-                st.toast(f"✅ Ответил в чат")
+                st.toast("Ответил в чат")
             time.sleep(2)
 
-    # 2. ВОПРОСЫ
+    # Вопросы
     qs = get_wb_data(wb_token, "questions")
     for q in qs:
-        ans = generate_ai(groq_key, q.get('text',''), "Товар", "Покупатель", prompt_chat, signature)
+        prod = q.get('productDetails', {}).get('productName', 'Товар')
+        ans = generate_ai(groq_key, q.get('text',''), prod, "Покупатель", prompt_chat, signature)
         if "ОШИБКА" not in ans:
-            send_wb(q['id'], ans, wb_token, "questions")
-            st.toast("✅ Ответил на вопрос")
+            if send_wb(q['id'], ans, wb_token, "questions") == "OK":
+                st.toast("Закрыл вопрос")
         time.sleep(2)
 
-    # 3. ОТЗЫВЫ
+    # Отзывы
     rs = get_wb_data(wb_token, "feedbacks")
     for r in rs:
-        ans = generate_ai(groq_key, r.get('text',''), "Товар", "Клиент", prompt_rev, signature)
-        if "ОШИБКА" not in ans:
-            send_wb(r['id'], ans, wb_token, "feedbacks")
-            st.toast("✅ Ответил на отзыв")
+        prod = r.get('productDetails', {}).get('productName', 'Товар')
+        ans = generate_ai(groq_key, r.get('text',''), prod, "Клиент", prompt_rev, signature)
+        if "ОШИБКА" not in ans and len(ans) > 5:
+            if send_wb(r['id'], ans, wb_token, "feedbacks") == "OK":
+                st.toast("Закрыл отзыв")
         time.sleep(2)
     
-    st.success("Круг завершен. Жду 60 сек...")
+    st.success("Цикл завершен. Пауза 60 сек.")
     time.sleep(60)
     st.rerun()
