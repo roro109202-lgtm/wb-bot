@@ -135,19 +135,22 @@ def get_wb_archive(wb_token, take=50, skip=0, nm_id=None, order="dateDesc"):
 
 def send_wb_smart(item_id, text, wb_token, mode="feedbacks"):
     """
-    Отправка ответа на отзыв/вопрос WB по официальной доке.
-    mode = "feedbacks" или "questions"
+    Отправка ответа на отзыв/вопрос WB.
+
+    feedbacks  -> POST  /api/v1/feedbacks/answer
+    questions  -> PATCH /api/v1/questions (обязателен state="answered")
     """
     headers = {
         "Authorization": wb_token,
         "Content-Type": "application/json",
     }
+
     if not text or len(text.strip()) < 2:
         return "Текст пустой"
 
     try:
         if mode == "feedbacks":
-            # Ответ на отзыв: POST /api/v1/feedbacks/answer
+            # Ответ на отзыв
             url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer"
             payload = {
                 "id": item_id,
@@ -159,12 +162,14 @@ def send_wb_smart(item_id, text, wb_token, mode="feedbacks"):
             return f"Ошибка {res.status_code}: {res.text}"
 
         elif mode == "questions":
-            # Ответ на вопрос: PATCH /api/v1/questions
+            # Ответ на вопрос (обязательно state="answered")
             url = "https://feedbacks-api.wildberries.ru/api/v1/questions"
             payload = {
                 "id": item_id,
-                "answer": {"text": text},
-                "wasViewed": True,
+                "state": "answered",
+                "answer": {
+                    "text": text,
+                },
             }
             res = requests.patch(url, headers=headers, json=payload, timeout=15)
             if res.status_code in (200, 204):
@@ -309,8 +314,8 @@ with st.sidebar:
 
     st.divider()
     col1, col2 = st.columns(2)
-    auto_reviews = col1.toggle("Автоматические ответы на отзывы")
-    auto_questions = col2.toggle("Автоматические ответы на вопросы")
+    auto_reviews = col1.toggle("Авто-ответы на отзывы")
+    auto_questions = col2.toggle("Авто-ответы на вопросы")
 
     st.markdown("---")
     if st.button("Сброс кэша"):
@@ -359,9 +364,7 @@ with tab_rev:
     else:
         for rev in reviews:
             try:
-                prod_name = (
-                    rev.get("productDetails", {}).get("productName", "Товар")
-                )
+                prod_name = rev.get("productDetails", {}).get("productName", "Товар")
                 nm_id = rev.get("productDetails", {}).get("nmId", 0)
                 brand = rev.get("productDetails", {}).get("brandName", "")
                 rating = rev.get("productValuation", 5)
@@ -370,9 +373,7 @@ with tab_rev:
                 pros = rev.get("pros", "")
                 cons = rev.get("cons", "")
                 comment = rev.get("text", "")
-                full_text_ai = (
-                    f"Плюсы: {pros}. Минусы: {cons}. Текст: {comment}"
-                )
+                full_text_ai = f"Плюсы: {pros}. Минусы: {cons}. Текст: {comment}"
                 if not (pros or cons or comment):
                     full_text_ai = ""
 
@@ -413,14 +414,11 @@ with tab_rev:
 
                         st.markdown("---")
 
-                        # Уникальный ключ для текстового поля
                         area_key = f"area_rev_{rev['id']}"
                         if area_key not in st.session_state:
                             st.session_state[area_key] = ""
 
-                        if st.button(
-                            "✨ Сгенерировать ответ", key=f"btn_{rev['id']}"
-                        ):
+                        if st.button("✨ Сгенерировать ответ", key=f"btn_{rev['id']}"):
                             with st.spinner("Пишу ответ..."):
                                 ans = generate_ai(
                                     groq_key,
@@ -434,17 +432,12 @@ with tab_rev:
 
                         final_txt = st.text_area(
                             "Ваш ответ:",
-                            key=area_key,  # значение берётся из session_state
+                            key=area_key,
                         )
 
-                        if st.button(
-                            "Отправить", key=f"snd_{rev['id']}"
-                        ):
+                        if st.button("Отправить", key=f"snd_{rev['id']}"):
                             res = send_wb_smart(
-                                rev["id"],
-                                final_txt,
-                                current_wb_token,
-                                "feedbacks",
+                                rev["id"], final_txt, current_wb_token, "feedbacks"
                             )
                             if res == "OK":
                                 st.success("Ответ отправлен!")
@@ -464,9 +457,7 @@ with tab_quest:
     else:
         for q in quests:
             try:
-                prod_name = (
-                    q.get("productDetails", {}).get("productName", "Товар")
-                )
+                prod_name = q.get("productDetails", {}).get("productName", "Товар")
                 nm_id = q.get("productDetails", {}).get("nmId", 0)
                 text = q.get("text", "")
 
@@ -490,9 +481,7 @@ with tab_quest:
                         if area_q_key not in st.session_state:
                             st.session_state[area_q_key] = ""
 
-                        if st.button(
-                            "✨ Ответ", key=f"qbtn_{q['id']}"
-                        ):
+                        if st.button("✨ Ответ", key=f"qbtn_{q['id']}"):
                             with st.spinner("Пишу ответ..."):
                                 ans = generate_ai(
                                     groq_key,
@@ -509,14 +498,9 @@ with tab_quest:
                             key=area_q_key,
                         )
 
-                        if st.button(
-                            "Отправить", key=f"qsnd_{q['id']}"
-                        ):
+                        if st.button("Отправить", key=f"qsnd_{q['id']}"):
                             res = send_wb_smart(
-                                q["id"],
-                                final_q,
-                                current_wb_token,
-                                "questions",
+                                q["id"], final_q, current_wb_token, "questions"
                             )
                             if res == "OK":
                                 st.success("Ответ на вопрос отправлен!")
@@ -549,9 +533,7 @@ with tab_arch:
     else:
         for item in st.session_state.get("history", []):
             try:
-                name = (
-                    item.get("productDetails", {}).get("productName", "Товар")
-                )
+                name = item.get("productDetails", {}).get("productName", "Товар")
                 txt = item.get("text", "")
                 created = format_date(item.get("createdDate"))
                 header = f"{name} ({created})"
