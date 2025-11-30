@@ -2,24 +2,38 @@ import streamlit as st
 import requests
 import time
 import datetime
-import random
 from openai import OpenAI
 
 # ==========================================
-# 1. НАСТРОЙКИ
+# 1. НАСТРОЙКИ (DARK THEME FRIENDLY)
 # ==========================================
-st.set_page_config(page_title="WB AI Master v26", layout="wide", page_icon="🛍️")
+st.set_page_config(page_title="WB AI Master v27", layout="wide", page_icon="🛍️")
 
 st.markdown("""
     <style>
     .block-container {padding-top: 1.5rem;}
     .stTextArea textarea {font-size: 16px !important;}
     
-    /* Стили для имитации интерфейса WB */
-    .wb-pros {color: #333; margin-bottom: 4px;}
-    .wb-cons {color: #333; margin-bottom: 4px;}
-    .wb-comment {color: #333; margin-top: 8px;}
-    .wb-label {font-weight: bold; color: #000;}
+    /* Стили для текста, адаптированные под темную тему */
+    .wb-pros {
+        color: #4CAF50; /* Зеленый для достоинств */
+        margin-bottom: 4px;
+        font-weight: 500;
+    }
+    .wb-cons {
+        color: #FF5252; /* Красный для недостатков */
+        margin-bottom: 4px;
+        font-weight: 500;
+    }
+    .wb-comment {
+        margin-top: 8px;
+        font-size: 16px;
+        /* Цвет текста наследуется от темы Streamlit (белый на темном) */
+    }
+    .wb-label {
+        font-weight: bold;
+        opacity: 0.8;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -35,29 +49,32 @@ def format_date(iso_date):
     except:
         return str(iso_date)
 
-# Генератор ссылки на фото товара по Артикулу (WB Magic)
-def get_product_image(nm_id):
+# ПРАВИЛЬНЫЙ ГЕНЕРАТОР ССЫЛОК НА ФОТО (2025)
+def get_main_photo_url(nm_id):
     try:
         vol = int(nm_id) // 100000
         part = int(nm_id) // 1000
-        # Перебор серверов корзины (WB хранит фото на разных хостах)
-        # Берем самый вероятный, чтобы не усложнять код
-        basket = "01"
-        if 0 <= vol <= 143: basket = "01"
-        elif 144 <= vol <= 287: basket = "02"
-        elif 288 <= vol <= 431: basket = "03"
-        elif 432 <= vol <= 719: basket = "04"
-        elif 720 <= vol <= 1007: basket = "05"
-        elif 1008 <= vol <= 1061: basket = "06"
-        elif 1062 <= vol <= 1115: basket = "07"
-        elif 1116 <= vol <= 1169: basket = "08"
-        elif 1170 <= vol <= 1313: basket = "09"
-        elif 1314 <= vol <= 1601: basket = "10"
-        elif 1602 <= vol <= 1655: basket = "11"
-        elif 1656 <= vol <= 1919: basket = "12"
-        else: basket = "13"
+        
+        # Определение хоста (basket)
+        if 0 <= vol <= 143: host = "01"
+        elif 144 <= vol <= 287: host = "02"
+        elif 288 <= vol <= 431: host = "03"
+        elif 432 <= vol <= 719: host = "04"
+        elif 720 <= vol <= 1007: host = "05"
+        elif 1008 <= vol <= 1061: host = "06"
+        elif 1062 <= vol <= 1115: host = "07"
+        elif 1116 <= vol <= 1169: host = "08"
+        elif 1170 <= vol <= 1313: host = "09"
+        elif 1314 <= vol <= 1601: host = "10"
+        elif 1602 <= vol <= 1655: host = "11"
+        elif 1656 <= vol <= 1919: host = "12"
+        elif 1920 <= vol <= 2045: host = "13"
+        elif 2046 <= vol <= 2189: host = "14"
+        elif 2190 <= vol <= 2405: host = "15"
+        else: host = "16" # Запасной
 
-        return f"https://basket-{basket}.wbbasket.ru/vol{vol}/part{part}/{nm_id}/images/c246x328/1.jpg"
+        # Используем /images/big/1.webp (или .jpg) - это главное фото
+        return f"https://basket-{host}.wbbasket.ru/vol{vol}/part{part}/{nm_id}/images/big/1.webp"
     except:
         return None
 
@@ -149,9 +166,27 @@ if hasattr(st, 'secrets'):
     default_wb = st.secrets.get('WB_API_TOKEN', "")
     default_groq = st.secrets.get('GROQ_API_KEY', "")
 
+if hasattr(st, 'secrets') and 'shops' in st.secrets:
+    if 'shops' not in st.session_state: st.session_state['shops'] = {}
+    for name, token in st.secrets['shops'].items():
+        st.session_state['shops'][name] = token
+
+# ==========================================
+# 4. САЙДБАР
+# ==========================================
+
 with st.sidebar:
     st.title("🎛️ Панель управления")
-    wb_token = st.text_input("WB Token", value=default_wb, type="password")
+    
+    # Магазины
+    shops = st.session_state.get('shops', {})
+    if shops:
+        selected_shop = st.selectbox("Магазин:", list(shops.keys()))
+        wb_token = shops[selected_shop]
+    else:
+        wb_token = st.text_input("WB Token", value=default_wb, type="password")
+        selected_shop = "Магазин"
+
     groq_key = st.text_input("Groq Key", value=default_groq, type="password")
     
     with st.expander("📝 Инструкции"):
@@ -175,7 +210,7 @@ if not wb_token or not groq_key:
 
 # --- ГЛАВНЫЙ ЭКРАН ---
 
-st.title("💎 WB AI Master v26 (Full Content)")
+st.title(f"💎 {selected_shop}")
 
 if st.button("🔄 Сканировать магазин", type="primary", use_container_width=True):
     with st.spinner("Загрузка..."):
@@ -207,59 +242,69 @@ with tab_rev:
     else:
         for rev in reviews:
             try:
-                # Извлекаем все поля
+                # Данные
                 prod_name = rev.get('productDetails', {}).get('productName', 'Товар')
                 nm_id = rev.get('productDetails', {}).get('nmId', 0)
                 brand = rev.get('productDetails', {}).get('brandName', '')
                 rating = rev.get('productValuation', 5)
                 user = rev.get('userName', 'Покупатель')
                 
-                # !!! СБОРКА ТЕКСТА !!!
+                # Текст
                 pros = rev.get('pros', '')
                 cons = rev.get('cons', '')
                 comment = rev.get('text', '')
-                
-                # Полный текст для нейросети
                 full_text_for_ai = f"Достоинства: {pros}\nНедостатки: {cons}\nКомментарий: {comment}"
                 
                 with st.container(border=True):
                     cols = st.columns([1, 5])
                     
+                    # 1. ГЛАВНОЕ ФОТО ТОВАРА (ЛЕВАЯ КОЛОНКА)
                     with cols[0]:
-                        # Пытаемся показать фото товара
-                        prod_img = get_product_image(nm_id)
-                        if prod_img:
-                            st.image(prod_img, use_container_width=True)
+                        main_photo = get_main_photo_url(nm_id)
+                        if main_photo:
+                            st.image(main_photo, use_container_width=True)
                         else:
                             st.write("📦")
                     
+                    # 2. КОНТЕНТ (ПРАВАЯ КОЛОНКА)
                     with cols[1]:
                         st.markdown(f"**{prod_name}**")
-                        st.caption(f"{brand} | Арт: {nm_id}")
+                        st.caption(f"Арт: {nm_id} | Бренд: {brand}")
                         st.markdown(f"⭐ **{rating}** | {user} | {format_date(rev.get('createdDate'))}")
                         
                         st.markdown("---")
                         
-                        # !!! ОТОБРАЖЕНИЕ КАК НА WB !!!
+                        # ВЫВОД ТЕКСТА (БЕЗ ЧЕРНОГО ЦВЕТА)
                         has_content = False
                         if pros:
-                            st.markdown(f"<div class='wb-pros'><span class='wb-label'>Достоинства:</span> {pros}</div>", unsafe_allow_html=True)
+                            st.markdown(f"<div class='wb-pros'>👍 Достоинства:</div>{pros}", unsafe_allow_html=True)
                             has_content = True
                         if cons:
-                            st.markdown(f"<div class='wb-cons'><span class='wb-label'>Недостатки:</span> {cons}</div>", unsafe_allow_html=True)
+                            st.markdown(f"<div class='wb-cons'>👎 Недостатки:</div>{cons}", unsafe_allow_html=True)
                             has_content = True
                         if comment:
-                            st.markdown(f"<div class='wb-comment'><span class='wb-label'>Комментарий:</span> {comment}</div>", unsafe_allow_html=True)
+                            st.markdown(f"<div class='wb-label'>💬 Комментарий:</div><div class='wb-comment'>{comment}</div>", unsafe_allow_html=True)
                             has_content = True
                             
                         if not has_content:
                             st.caption("*(Оценка без текста)*")
                         
+                        # ВЫВОД ФОТО ПОКУПАТЕЛЯ (ЕСЛИ ЕСТЬ)
+                        if rev.get('photoLinks'):
+                            st.markdown("**Фото клиента:**")
+                            # Показываем все фото в ряд
+                            p_cols = st.columns(len(rev['photoLinks']))
+                            for i, p in enumerate(rev['photoLinks']):
+                                p_url = p.get('smallSize') or p.get('fullSize')
+                                if p_url and i < 5: # Ограничим 5 фото
+                                    p_cols[i].image(p_url, width=100)
+
+                        st.markdown("---")
+
                         # Блок ответа
                         area_key = f"rev_txt_{rev.get('id')}"
                         
                         if st.button("✨ Сгенерировать", key=f"gen_r_{rev.get('id')}"):
-                            # Передаем собранный текст
                             text_to_send = full_text_for_ai if has_content else "Оценка без текста"
                             ans = generate_ai(groq_key, text_to_send, prod_name, user, prompt_rev, signature)
                             st.session_state[area_key] = ans
@@ -276,8 +321,9 @@ with tab_rev:
                                 st.rerun()
                             else:
                                 st.error(res)
-            except Exception:
-                pass
+            except Exception as e:
+                # Если ошибка в одном отзыве, не ломаем остальные
+                st.error(f"Ошибка карточки: {e}")
 
 # === ВОПРОСЫ ===
 with tab_quest:
@@ -294,13 +340,15 @@ with tab_quest:
                 with st.container(border=True):
                     cols = st.columns([1, 5])
                     with cols[0]:
-                        prod_img = get_product_image(nm_id)
+                        prod_img = get_main_photo_url(nm_id)
                         if prod_img: st.image(prod_img, use_container_width=True)
                         else: st.write("❓")
-                        
+                    
                     with cols[1]:
                         st.markdown(f"**{prod_name}**")
-                        st.write(f"❓ {text}")
+                        st.caption(f"Арт: {nm_id}")
+                        st.markdown(f"**Вопрос:** {text}")
+                        st.caption(format_date(q.get('createdDate')))
                         
                         area_q_key = f"quest_txt_{q.get('id')}"
                         
@@ -320,21 +368,23 @@ with tab_quest:
                                 st.rerun()
                             else:
                                 st.error(res)
-            except Exception:
-                pass
+            except: pass
 
-# === ЛОГИ И АРХИВ ===
+# === ЛОГИ ===
 with tab_log:
     for log in st.session_state['action_log']:
         st.write(log)
 
+# === АРХИВ ===
 with tab_arch:
     if st.button("📥 История"):
         st.session_state['history'] = get_wb_data(wb_token, "feedbacks", True)
     for item in st.session_state.get('history', []):
         try:
-            with st.expander(f"{item['productDetails']['productName']}"):
-                st.write(item.get('text', ''))
+            name = item.get('productDetails', {}).get('productName', 'Товар')
+            txt = item.get('text', '')
+            with st.expander(f"{name} ({format_date(item.get('createdDate'))})"):
+                st.write(txt if txt else "Без текста")
                 if item.get('answer'): st.info(item['answer']['text'])
         except: pass
 
@@ -348,12 +398,13 @@ if auto_reviews or auto_questions:
             p_name = item.get('productDetails', {}).get('productName', 'Товар')
             status_container.warning(f"🤖 Отзыв: {p_name}...")
             
-            # Собираем полный текст для авто-режима
+            # Сбор текста
             pros = item.get('pros', '')
             cons = item.get('cons', '')
             comment = item.get('text', '')
             full_txt = f"Плюсы: {pros}. Минусы: {cons}. Текст: {comment}"
-            
+            if not full_txt.strip(): full_txt = "Оценка без текста"
+
             ans = generate_ai(groq_key, full_txt, p_name, item.get('userName', ''), prompt_rev, signature)
             
             if "Ошибка" not in ans:
